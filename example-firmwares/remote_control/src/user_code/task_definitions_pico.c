@@ -32,18 +32,31 @@ static void stopCompute(void)
     FpgaMiddleware_write(fpga, cmd, COMPUTE_BYTE, 1);
 }
 
-static uint8_t eraseFlash(flashConfiguration_t *flashConfig, uint32_t startSector, uint32_t length)
+static uint8_t eraseFlash(flashConfiguration_t *flashConfig,
+    uint32_t startAddress,
+    uint32_t length)
 {
-    for (size_t index = 0;
-         index <
-         (size_t)ceilf((float)length / (float)flashGetBytesPerSector(flashConfig));
-         index++)
+    if (length == 0)
+        return 0;
+
+    const uint32_t sectorSize = flashGetBytesPerSector(flashConfig);
+
+    // auf Sektorgrenzen aus-/aufrunden
+    uint32_t first = startAddress - (startAddress % sectorSize);
+    uint32_t end   = startAddress + length;                       
+    uint32_t last  = ((end + sectorSize - 1) / sectorSize) * sectorSize;
+
+    for (uint32_t addr = first; addr < last; addr += sectorSize)
     {
-        uint8_t error_code = flashEraseSector(flashConfig,
-                                              startSector + (index * flashGetBytesPerSector(flashConfig)));
-        return error_code;
+        uint8_t error_code = flashEraseSector(flashConfig, addr);
+        if (error_code != 0)
+        {
+            return error_code;   
+        }
     }
+    return 0;
 }
+
 
 uint32_t flashWriteBitstream(
     flashConfiguration_t *flashConfig,
@@ -192,17 +205,27 @@ typedef struct
     uint32_t written_bytes;
 } UserDataStruct;
 
+
+static void finish_transfer(TaskContext *ctx, UserDataStruct *ud)
+{
+    ctx->task_services.send_data(&ctx->task_services, 0,
+                                 (uint8_t *)&ud->written_bytes, 4, false);
+    ctx->task_services.send_return(&ctx->task_services, 0, 0, false);
+    free(ud);
+    ctx->user_data = NULL;
+}
+
+static void fail_transfer(TaskContext *ctx, UserDataStruct *ud, const char *msg)
+{
+    ctx->task_services.send_data(&ctx->task_services, 0,
+                                 (uint8_t *)msg, strlen(msg), false);
+    ctx->task_services.send_return(&ctx->task_services, 0, 1, false); // 1 = Fehler
+    if (ud) free(ud);
+    ctx->user_data = NULL;
+}
+
 void write_to_flash_from_remote(TaskContext *task_context)
 {
-    if (task_context->step_counter > 0 && task_context->input_data_len < flashConfig.bytesPerPage)
-    {
-        // sending completed
-        UserDataStruct *user_data = (UserDataStruct *)task_context->user_data;
-        task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)&user_data->written_bytes, 4, false);
-        task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
-        return;
-    }
-
     if (task_context->step_counter == 0)
     {
         Fpga *fpga = Config_getFpga();
@@ -211,32 +234,63 @@ void write_to_flash_from_remote(TaskContext *task_context)
             Fpga_powerOff(fpga);
         }
 
-        task_context->user_data = malloc(sizeof(UserDataStruct));
-        UserDataStruct *user_data = (UserDataStruct *)task_context->user_data;
-        user_data->written_bytes = 0;
-
-        user_data->target_sector = task_context->input_data[0];
-
-        eraseFlash(&flashConfig, 0, task_context->input_data_len);
-    }
-    else
-    {
-        UserDataStruct *user_data = (UserDataStruct *)task_context->user_data;
-        uint16_t writtenBytes = flashWritePage(&flashConfig, (task_context->step_counter - 1) * flashConfig.bytesPerPage + (user_data->target_sector * flashConfig.bytesPerSector), task_context->input_data, flashConfig.bytesPerPage);
-        if (writtenBytes <= 0)
+        UserDataStruct *ud = malloc(sizeof(UserDataStruct));
+        if (ud == NULL)
         {
-            char *error_msg = "Flash write failed";
-            task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)&error_msg, strlen(error_msg), false);
+            fail_transfer(task_context, NULL, "Out of memory");
+            return;
         }
-        user_data->written_bytes += writtenBytes;
+        ud->written_bytes = 0;
+        ud->target_sector = task_context->input_data[0];
+        task_context->user_data = ud;
+
+        task_context->input_data_len = 0;
+        task_context->step_counter++;
+        return;
     }
 
-    task_context->input_data_len = 0; // set back to zero so new data overwrites old data
-    task_context->step_counter++;
+    UserDataStruct *ud = (UserDataStruct *)task_context->user_data;
+    uint32_t len = task_context->input_data_len;
 
-    // task_context->task_services.send_return(&task_context->task_services, 0, writtenBytes, false);
-    return;
+    if (len == 0)
+    {
+        finish_transfer(task_context, ud);
+        return;
+    }
+
+    uint32_t page_index = task_context->step_counter - 1;
+    uint32_t address = (uint32_t)ud->target_sector * flashConfig.bytesPerSector
+                     + page_index * flashConfig.bytesPerPage;
+
+    if ((address % flashConfig.bytesPerSector) == 0)
+    {
+        uint8_t err = eraseFlash(&flashConfig, address, flashConfig.bytesPerSector);
+        if (err != 0)
+        {
+            fail_transfer(task_context, ud, "Flash erase failed");
+            return;
+        }
+    }
+
+    int32_t written = flashWritePage(&flashConfig, address,
+                                     task_context->input_data, len);
+    if (written <= 0 || (uint32_t)written != len)
+    {
+        fail_transfer(task_context, ud, "Flash write failed");
+        return;
+    }
+    ud->written_bytes += (uint32_t)written;
+
+    if (len < flashConfig.bytesPerPage)
+    {
+        finish_transfer(task_context, ud);
+        return;
+    }
+
+    task_context->input_data_len = 0; // Platz für neue Daten
+    task_context->step_counter++;
 }
+
 
 #define ADDR_MODEL_ID 0
 #define BYTES_MODEL_ID 16
