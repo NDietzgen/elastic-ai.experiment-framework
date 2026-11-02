@@ -27,3 +27,6 @@ coverage.xml
 .cache/
 .logs
 logs
+
+# Vivado-Build-Ergebnisse (Bitstreams, Reports, Metriken)
+tests/vivado/artifacts/

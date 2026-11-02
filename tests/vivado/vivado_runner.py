@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from vivado_reports import BuildMetrics, parse_reports
+
 HERE = Path(__file__).parent
 
 
@@ -24,12 +26,16 @@ class BuildConfig:
     proj_name: str
     proj_dir: str      # Windows-Pfad, z. B. r"C:\Users\Nils\vivado_tmp"
     vivado: str        # Windows-Pfad zur vivado.bat
-    work_cwd: str      # WSL-Pfad, z. B. "/mnt/c/Users/Nils/vivado_tmp"
-    jobs: int 
+    jobs: int
+
+    @property
+    def work_cwd(self) -> Path:
+        """Arbeitsordner von cmd.exe/Vivado: proj_dir als WSL-Pfad."""
+        return to_wsl(self.proj_dir)
 
     @property
     def proj_path(self) -> Path:
-        return to_wsl(self.proj_dir) / self.proj_name
+        return self.work_cwd / self.proj_name
 
     @property
     def xpr(self) -> Path:
@@ -38,6 +44,10 @@ class BuildConfig:
     @property
     def impl_dir(self) -> Path:
         return self.proj_path / f"{self.proj_name}.runs" / "impl_1"
+
+    @property
+    def report_dir(self) -> Path:
+        return self.proj_path / "reports"
 
 
 class BuildError(RuntimeError):
@@ -48,13 +58,21 @@ class BuildError(RuntimeError):
         self.log = log
 
 
+def _error_excerpt(log: str, tail: int = 15) -> str:
+    """ERROR-Zeilen aus dem Log, sonst die letzten Zeilen (z. B. bei Tcl-'error')."""
+    lines = log.splitlines()
+    errors = [l for l in lines if "ERROR" in l or "CRITICAL WARNING" in l]
+    return "\n".join(errors[:20] if errors else lines[-tail:])
+
+
 def run_vivado(cfg: BuildConfig, *args):
-    Path(cfg.work_cwd).mkdir(parents=True, exist_ok=True)
+    work_cwd = cfg.work_cwd
+    work_cwd.mkdir(parents=True, exist_ok=True)
     return subprocess.run(
         ["cmd.exe", "/c", cfg.vivado, *args],
         capture_output=True,
         text=True,
-        cwd=cfg.work_cwd,
+        cwd=work_cwd,
     )
 
 
@@ -65,7 +83,11 @@ def check_vivado(cfg: BuildConfig) -> bool:
 
 
 def build_bitstream(cfg: BuildConfig, output_dir: Path | None = None) -> Path:
-    """Baut das Projekt bis zum Bitstream und gibt den Pfad (WSL) zur .bit-Datei zurück."""
+    """Baut das Projekt bis zum Bitstream und gibt den Pfad (WSL) zur .bit-Datei zurück.
+
+    Im selben Vivado-Lauf schreibt build.tcl auch die Reports nach cfg.report_dir;
+    auslesen lassen sie sich danach mit read_metrics(cfg).
+    """
     start = time.time() - 2
 
     result = run_vivado(
@@ -84,7 +106,11 @@ def build_bitstream(cfg: BuildConfig, output_dir: Path | None = None) -> Path:
     log = result.stdout + result.stderr
 
     if result.returncode != 0 or "ERROR:" in result.stdout:
-        raise BuildError(f"Vivado-Build fehlgeschlagen (Exit-Code {result.returncode})", log)
+        raise BuildError(
+            f"Vivado-Build fehlgeschlagen (Exit-Code {result.returncode}):\n"
+            + _error_excerpt(log),
+            log,
+        )
 
     bits = sorted(cfg.impl_dir.glob("*.bit"), key=lambda p: p.stat().st_mtime)
     if not bits:
@@ -100,3 +126,25 @@ def build_bitstream(cfg: BuildConfig, output_dir: Path | None = None) -> Path:
         bit = Path(shutil.copy2(bit, output_dir / bit.name))
 
     return bit
+
+
+def read_metrics(cfg: BuildConfig, output_dir: Path | None = None) -> BuildMetrics:
+    """Liest Ressourcenverbrauch, Timing und Leistung des letzten Builds aus den Reports.
+
+    Startet Vivado nicht neu. Mit output_dir werden metrics.json und die Roh-Reports
+    dorthin gespeichert.
+    """
+    util_rpt = cfg.report_dir / "utilization.rpt"
+    if not util_rpt.exists():
+        raise FileNotFoundError(
+            f"Keine Reports in {cfg.report_dir} – zuerst build_bitstream(cfg) ausführen"
+        )
+
+    bits = list(cfg.impl_dir.glob("*.bit"))
+    if bits and util_rpt.stat().st_mtime < max(b.stat().st_mtime for b in bits):
+        raise RuntimeError(f"Reports in {cfg.report_dir} sind älter als der Bitstream")
+
+    metrics = parse_reports(cfg.report_dir, name=cfg.proj_name)
+    if output_dir is not None:
+        metrics.save(output_dir)
+    return metrics

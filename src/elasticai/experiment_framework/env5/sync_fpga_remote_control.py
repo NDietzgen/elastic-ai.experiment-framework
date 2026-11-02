@@ -129,6 +129,27 @@ class SyncFPGARemoteControl(SyncRemoteControl):
 
         self._run_task(task)
 
+    def program_fpga(
+        self,
+        path_to_bitstream: str | Path,
+        flash_sector: int = 0,
+        need_ack: bool = True,
+        has_crc: bool = False,
+        boot_delay: float = 1.0,
+    ):
+        """Löscht den Flash, schreibt den Bitstream und startet das FPGA neu."""
+        self.fpga_power_off()
+        self.clear_flash()
+        self.upload_bitstream(
+            flash_sector=flash_sector,
+            path_to_bitstream=path_to_bitstream,
+            need_ack=need_ack,
+            has_crc=has_crc,
+        )
+        self.fpga_power_off()
+        self.fpga_power_on()
+        time.sleep(boot_delay)  # FPGA braucht Zeit zum Booten aus dem Flash
+
 
 @click.group
 def fpga():
