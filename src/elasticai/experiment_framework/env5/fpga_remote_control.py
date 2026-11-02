@@ -36,6 +36,10 @@ class FPGARemoteControl(RemoteControl):
         task = SimpleTask(TaskDefinitionIds.FPGA_POWER_OFF)
         return await self._run_task(task)
 
+    async def fpga_clear_flash(self):
+        task = SimpleTask(TaskDefinitionIds.FPGA_CLEAR_FLASH)
+        return await self._run_task(task)
+
     async def read_skeleton_id(self) -> str:
         task = SimpleTask(TaskDefinitionIds.FPGA_READ_SKELETON_ID)
 
