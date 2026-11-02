@@ -30,3 +30,6 @@ logs
 
 # Vivado-Build-Ergebnisse (Bitstreams, Reports, Metriken)
 tests/vivado/artifacts/
+
+# lokaler picotool-Klon (installiert nach /usr/local/bin), nicht Teil des Repos
+/picotool/
