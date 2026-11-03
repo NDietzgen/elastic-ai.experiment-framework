@@ -54,4 +54,48 @@ void FpgaMiddleware_disableUserLogic(FpgaMiddleware *self);
 void FpgaMiddleware_read(FpgaMiddleware *self, uint8_t *data, uint16_t startAddress, uint16_t length);
 void FpgaMiddleware_write(FpgaMiddleware *self, const uint8_t *data, uint16_t startAddress, uint16_t length);
 
+/*
+ * ---------------------------------------------------------------------------
+ * Protokoll von SPI_MIDDLEWARE aus dem Verilog-Template (env5/verilog_template)
+ * ---------------------------------------------------------------------------
+ * Frame (24 Bit, MSB first, SPI-Mode 0):
+ *   CMD[23:22] | ADR[21:16] | DATA[15:0]
+ *
+ *   CMD 0 CNTL: ADR-Bits steuern  [0] DO_TEST, [1] SEL_DUT (DATA[N:1] = DUT),
+ *               [2] LED = DATA[0], [3] LED toggeln
+ *   CMD 1 WR:   DATA an Adresse ADR des gewählten DUT schreiben
+ *   CMD 2 RD:   Adresse ADR des gewählten DUT lesen
+ *   CMD 3 HEAD: 16-Bit-Teil ADR des DUT-Headers lesen
+ *
+ * Die Antwort {CMD, ADR, DATA} auf einen Frame kommt erst im nächsten Frame
+ * zurück. Die Lesefunktionen schicken deshalb Folge-Frames und prüfen, ob
+ * CMD und ADR der Antwort zur Anfrage passen.
+ *
+ * Vorher FpgaMiddleware_init aufrufen, danach FpgaMiddleware_deinit.
+ * FpgaMiddleware_fpgaIsBusy entspricht FPGA_BUSY = !RDY des gewählten DUT.
+ */
+
+#include <stdint.h>
+
+#define FPGA_MIDDLEWARE_ADR_MASK 0x3F
+#define FPGA_MIDDLEWARE_MAX_WORDS 64 // 6-Bit-Adressraum
+
+typedef enum
+{
+  FPGA_MIDDLEWARE_CMD_CNTL = 0,
+  FPGA_MIDDLEWARE_CMD_WR = 1,
+  FPGA_MIDDLEWARE_CMD_RD = 2,
+  FPGA_MIDDLEWARE_CMD_HEAD = 3,
+} FpgaMiddlewareCmd;
+
+/* Schickt einen Frame und gibt die Antwort auf den VORHERIGEN Frame zurück. */
+uint32_t FpgaMiddleware_transferFrame(FpgaMiddleware *self, FpgaMiddlewareCmd cmd, uint8_t adr, uint16_t data);
+
+void FpgaMiddleware_selectDut(FpgaMiddleware *self, uint8_t dut);
+void FpgaMiddleware_writeWord(FpgaMiddleware *self, uint8_t adr, uint16_t data);
+bool FpgaMiddleware_readWord(FpgaMiddleware *self, uint8_t adr, uint16_t *data);
+bool FpgaMiddleware_readHeader(FpgaMiddleware *self, uint32_t *header);
+void FpgaMiddleware_startTest(FpgaMiddleware *self);
+bool FpgaMiddleware_waitWhileBusy(FpgaMiddleware *self, uint32_t timeout_us);
+
 #endif // MIDDLEWARE_H

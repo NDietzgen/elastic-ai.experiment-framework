@@ -54,7 +54,7 @@ Spi *Config_getFpgaSpi(void)
       .mosiPin = FPGA_SPI_MOSI,
       .sckPin = FPGA_SPI_CLOCK,
       .data_bits = 8,
-      .phase = EAI_SPI_CPHA_1,
+      .phase = EAI_SPI_CPHA_0, // SPI-Mode 0 wie SPI_SLAVE_WCLK im Verilog-Template
       .order = EAI_SPI_MSB_FIRST,
       .polarity = EAI_SPI_CPOL_0};
   if (fpgaSpi == NULL)

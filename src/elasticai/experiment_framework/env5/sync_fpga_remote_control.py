@@ -14,7 +14,12 @@ from ..remote_control.logging_config import configure_logging
 from ..remote_control.sync_remote_control import (
     SyncRemoteControl,
 )
-from .config import BYTE_ORDER, TaskDefinitionIds
+from .config import (
+    DEFAULT_DUT,
+    HEADER_BYTES,
+    TaskDefinitionIds,
+    predict_payload,
+)
 from .tasks_registry import (
     FPGAInitTask,
     FPGAWriteToFlashTask,
@@ -64,18 +69,20 @@ class SyncFPGARemoteControl(SyncRemoteControl):
 
     def read_skeleton_id(
         self,
+        dut: int = DEFAULT_DUT,
         need_ack: bool = False,
         has_crc: bool = False,
     ) -> str:
+        """Liest den 32-Bit-Header des DUT 'dut' (Verilog-Template) als Hex"""
         task = SimpleTask(
             TaskDefinitionIds.FPGA_READ_SKELETON_ID,
+            bytes([dut]),
             need_ack=need_ack,
             has_crc=has_crc,
         )
 
         self._run_task(task)
-        result = task.result[-16:]
-        return result.hex()
+        return task.result[-HEADER_BYTES:].hex()
 
     def clear_flash(
         self,
@@ -95,12 +102,34 @@ class SyncFPGARemoteControl(SyncRemoteControl):
         self,
         data: bytes,
         result_size: int,
+        dut: int = DEFAULT_DUT,
         need_ack: bool = False,
         has_crc: bool = False,
     ) -> bytes:
+        """Schreibt 'data' ins DUT 'dut', startet es und liest 'result_size' Bytes"""
+        """Daten und Ergebnis sind 16-Bit-Worte (Little Endian) ab Adresse 0"""
+        payload, words_bytes = predict_payload(data, result_size, dut)
         task = SimpleTask(
             TaskDefinitionIds.FPGA_PREDICT,
-            result_size.to_bytes(1, BYTE_ORDER) + data,
+            payload,
+            need_ack=need_ack,
+            has_crc=has_crc,
+        )
+
+        self._run_task(task)
+        return task.result[-words_bytes:][:result_size]
+
+    def spi_echo(
+        self,
+        data: bytes,
+        need_ack: bool = False,
+        has_crc: bool = False,
+    ) -> bytes:
+        """Schickt data per SPI ans FPGA und gibt die Echo-Antwort zurück"""
+        """Funktioniert mit jedem Bitstream aus dem Verilog-Template"""
+        task = SimpleTask(
+            TaskDefinitionIds.FPGA_SPI_ECHO,
+            data,
             need_ack=need_ack,
             has_crc=has_crc,
         )
@@ -286,10 +315,12 @@ def clear_flash(control, need_ack, has_crc):
 
 
 @fpga.command("read-skeleton-id")
+@click.option("--dut", type=int, default=DEFAULT_DUT, show_default=True)
 @communication_options
 @click.pass_obj
-def read_skeleton_id(control, need_ack, has_crc):
+def read_skeleton_id(control, dut, need_ack, has_crc):
     result = control.read_skeleton_id(
+        dut=dut,
         need_ack=need_ack,
         has_crc=has_crc,
     )
@@ -314,13 +345,36 @@ def upload(control, flash_sector, path, need_ack, has_crc):
 @fpga.command("predict")
 @click.argument("data")
 @click.argument("length", type=int)
+@click.option("--dut", type=int, default=DEFAULT_DUT, show_default=True)
 @communication_options
 @click.pass_obj
-def predict(control, data, length, need_ack, has_crc):
+def predict(control, data, length, dut, need_ack, has_crc):
     result = control.predict(
         bytes.fromhex(data.removeprefix("0x")),
         length,
+        dut=dut,
         need_ack=need_ack,
         has_crc=has_crc,
     )
     click.echo(f"Predict result: {result}")
+
+
+@fpga.command("echo")
+@click.argument("data")
+@communication_options
+@click.pass_obj
+def echo(control, data, need_ack, has_crc):
+    """Schickt Daten ans FPGA und zeigt das Echo.
+    Funktioniert mit jedem Bitstream aus dem Verilog-Template.
+    """
+    try:
+        sent = bytes.fromhex(data.removeprefix("0x"))
+    except ValueError as exc:
+        raise click.BadParameter(f"kein gültiger Hex-Wert: {data}") from exc
+    if not sent:
+        raise click.BadParameter("mindestens ein Byte angeben")
+
+    received = control.spi_echo(sent, need_ack=need_ack, has_crc=has_crc)
+    click.echo(f"gesendet : {sent.hex(' ')}")
+    click.echo(f"empfangen: {received.hex(' ')}")
+    click.echo("OK" if received == sent else "MISMATCH")

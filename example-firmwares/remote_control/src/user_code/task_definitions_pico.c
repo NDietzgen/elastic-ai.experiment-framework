@@ -16,22 +16,6 @@
 #include <math.h>
 #include <string.h>
 
-#define USER_LOGIC_START_ADDRESS 18
-#define COMPUTE_BYTE 16
-
-static void startCompute(void)
-{
-    uint8_t cmd[1] = {0x01};
-    FpgaMiddleware *fpga = Config_getFpgaMiddleware();
-    FpgaMiddleware_write(fpga, cmd, COMPUTE_BYTE, 1);
-}
-static void stopCompute(void)
-{
-    uint8_t cmd[1] = {0x00};
-    FpgaMiddleware *fpga = Config_getFpgaMiddleware();
-    FpgaMiddleware_write(fpga, cmd, COMPUTE_BYTE, 1);
-}
-
 static uint8_t eraseFlash(flashConfiguration_t *flashConfig,
     uint32_t startAddress,
     uint32_t length)
@@ -292,68 +276,98 @@ void write_to_flash_from_remote(TaskContext *task_context)
 }
 
 
-#define ADDR_MODEL_ID 0
-#define BYTES_MODEL_ID 16
+// ---------------------------------------------------------------
+// read_skeleton_id / predict: Protokoll von SPI_MIDDLEWARE aus dem Verilog-Template
+#define FPGA_RC_OK 0
+#define FPGA_RC_INVALID_INPUT 2
+#define FPGA_RC_TIMEOUT 4
+#define FPGA_RC_COMMUNICATION 5
+#define DEFAULT_DUT 1
+#define PREDICT_TIMEOUT_US (1000 * 1000)
 
-void read_skeleton_id(TaskContext *task_context)
+static void ensureFpgaPowered(TaskContext *task_context)
 {
-    uint8_t skeleton_id[16] = {0};
     Fpga *fpga = Config_getFpga();
     if (!Fpga_isPoweredOn(fpga))
     {
         Fpga_powerOn(fpga);
         sleep_ms(100); // wait for FPGA to power up
         char *msg = "power_fpga";
-        task_context->task_services.send_data(&task_context->task_services, 0, msg, 10, false);
+        task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)msg, 10, false);
     }
-    FpgaMiddleware *fpga_middleware = Config_getFpgaMiddleware();
-
-    FpgaMiddleware_init(fpga_middleware);
-    FpgaMiddleware_enableUserLogic(fpga_middleware);
-    FpgaMiddleware_read(fpga_middleware, skeleton_id, ADDR_MODEL_ID, BYTES_MODEL_ID);
-    FpgaMiddleware_disableUserLogic(fpga_middleware);
-    FpgaMiddleware_deinit(fpga_middleware);
-
-    task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)&skeleton_id, BYTES_MODEL_ID, false);
-    task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
 }
 
+// Input:  [0] DUT (optional, Default 1)
+// Output: 32-Bit-DUT-Header, Big Endian:
+//         NUM_DUT[31:26] | DUT_TYPE[25:22] | NUM_IN[21:16] | NUM_OUT[15:10] | BW_IN[9:5] | BW_OUT[4:0]
+void read_skeleton_id(TaskContext *task_context)
+{
+    uint8_t dut = (task_context->input_data_len >= 1) ? task_context->input_data[0] : DEFAULT_DUT;
+
+    ensureFpgaPowered(task_context);
+    FpgaMiddleware *mw = Config_getFpgaMiddleware();
+    FpgaMiddleware_init(mw);
+    FpgaMiddleware_selectDut(mw, dut);
+    uint32_t header = 0;
+    bool ok = FpgaMiddleware_readHeader(mw, &header);
+    FpgaMiddleware_deinit(mw);
+
+    uint8_t out[4] = {header >> 24, header >> 16, header >> 8, header};
+    task_context->task_services.send_data(&task_context->task_services, 0, out, sizeof(out), false);
+    task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
+}
+
+// Input:  [0] DUT, [1] Ergebnisgroesse in Byte (gerade), [2..] Eingangsdaten
+//         Daten = 16-Bit-Worte, Little Endian, Wort i -> Adresse i
+// Ablauf: DUT waehlen, Worte schreiben, DO_TEST, auf FPGA_BUSY low warten,
+//         Ergebnisworte ab Adresse 0 lesen
+// Output: Ergebnisworte, Little Endian
 void predict(TaskContext *task_context)
 {
+    uint32_t len = task_context->input_data_len;
+    uint8_t dut = task_context->input_data[0];
+    uint8_t result_size = task_context->input_data[1];
+    uint32_t in_bytes = len - 2;
 
-    // task_context->task_services.send_data(&task_context->task_services, 0, task_context->input_data, 1, false);
-    // return;
-    Fpga *fpga = Config_getFpga();
-    if (!Fpga_isPoweredOn(fpga))
+    if (len < 4 || (in_bytes % 2) != 0 || (result_size % 2) != 0 || result_size == 0 ||
+        in_bytes / 2 > FPGA_MIDDLEWARE_MAX_WORDS || result_size / 2 > FPGA_MIDDLEWARE_MAX_WORDS)
     {
-        Fpga_powerOn(fpga);
-        sleep_ms(100); // wait for FPGA to power up
-        char *msg = "power_fpga";
-        task_context->task_services.send_data(&task_context->task_services, 0, msg, 10, false);
+        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_INVALID_INPUT, false);
+        return;
     }
-    FpgaMiddleware *fpga_middleware = Config_getFpgaMiddleware();
-    FpgaMiddleware_init(fpga_middleware);
-    FpgaMiddleware_enableUserLogic(fpga_middleware);
 
-    uint8_t result_size = task_context->input_data[0];
-    uint8_t model_inference_input = task_context->input_data[1];
+    ensureFpgaPowered(task_context);
+    FpgaMiddleware *mw = Config_getFpgaMiddleware();
+    FpgaMiddleware_init(mw);
+    FpgaMiddleware_selectDut(mw, dut);
 
-    FpgaMiddleware_write(fpga_middleware, &model_inference_input, USER_LOGIC_START_ADDRESS, 1);
-
-    startCompute();
-    while (FpgaMiddleware_fpgaIsBusy(fpga_middleware))
+    const uint8_t *in = &task_context->input_data[2];
+    for (uint32_t i = 0; i < in_bytes / 2; i++)
     {
+        FpgaMiddleware_writeWord(mw, (uint8_t)i, (uint16_t)(in[2 * i] | (in[2 * i + 1] << 8)));
     }
-    stopCompute();
 
-    FpgaMiddleware_read(fpga_middleware, task_context->output_data, USER_LOGIC_START_ADDRESS, result_size);
-    task_context->output_data_len = task_context->input_data_len;
+    FpgaMiddleware_startTest(mw);
+    if (!FpgaMiddleware_waitWhileBusy(mw, PREDICT_TIMEOUT_US))
+    {
+        FpgaMiddleware_deinit(mw);
+        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_TIMEOUT, false);
+        return;
+    }
 
-    FpgaMiddleware_disableUserLogic(fpga_middleware);
-    FpgaMiddleware_deinit(fpga_middleware);
+    bool ok = true;
+    uint8_t *out = task_context->output_data;
+    for (uint32_t i = 0; i < result_size / 2u; i++)
+    {
+        uint16_t word = 0;
+        ok &= FpgaMiddleware_readWord(mw, (uint8_t)i, &word);
+        out[2 * i] = (uint8_t)(word & 0xFF);
+        out[2 * i + 1] = (uint8_t)(word >> 8);
+    }
+    FpgaMiddleware_deinit(mw);
 
-    task_context->task_services.send_data(&task_context->task_services, 0, task_context->output_data, result_size, false);
-    task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
+    task_context->task_services.send_data(&task_context->task_services, 0, out, result_size, false);
+    task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
 }
 
 void get_flash_ones(TaskContext *task_context)
@@ -392,4 +406,50 @@ void compute_sensor_data(TaskContext *task_context)
     }
 
     task_context->step_counter++;
+}
+
+// ---------------------------------------------------------------
+// SPI-Echo-Test der Strecke Pico <-> FPGA (jeder Bitstream aus dem Verilog-Template):
+// SPI_SLAVE_WCLK ist ein 24-Bit-Schieberegister und schiebt jedes empfangene Byte
+// unter demselben CS ECHO_DELAY_BYTES Bytes später wieder auf MISO heraus.
+// Darum werden ECHO_DELAY_BYTES Dummy-Bytes (0x00) angehängt und die Antwort ab
+// rx[ECHO_DELAY_BYTES] zurückgegeben. Die letzten 24 Bit (00 00 00) sieht
+// SPI_MIDDLEWARE als CNTL-Frame ohne gesetzte Bits, also ohne Wirkung.
+#define ECHO_DELAY_BYTES 3 // SPI_BITWIDTH des Tops (24 Bit) / 8
+#define ECHO_MAX_LEN (TASK_BUFFER_LEN_BYTE - ECHO_DELAY_BYTES)
+#define ECHO_RC_OK 0
+#define ECHO_RC_INVALID_LEN 2
+
+void fpga_spi_echo(TaskContext *task_context)
+{
+    static uint8_t tx[TASK_BUFFER_LEN_BYTE];
+    static uint8_t rx[TASK_BUFFER_LEN_BYTE];
+
+    uint32_t len = task_context->input_data_len;
+    if (len == 0 || len > ECHO_MAX_LEN)
+    {
+        task_context->task_services.send_return(&task_context->task_services, 0, ECHO_RC_INVALID_LEN, false);
+        return;
+    }
+
+    Fpga *fpga = Config_getFpga();
+    if (!Fpga_isPoweredOn(fpga))
+    {
+        Fpga_powerOn(fpga);
+        sleep_ms(100); // wait for FPGA to power up
+    }
+
+    memcpy(tx, task_context->input_data, len);
+    memset(&tx[len], 0x00, ECHO_DELAY_BYTES); // Dummy-Bytes, um die letzten Bytes herauszuschieben
+
+    Spi *spi = Config_getFpgaSpi();
+    Spi_init(spi);
+    Spi_setupSlave(spi, FPGA_SPI_CS);
+    Spi_select(spi, FPGA_SPI_CS);
+    Spi_read_write(spi, tx, rx, len + ECHO_DELAY_BYTES);
+    Spi_deselect(spi, FPGA_SPI_CS);
+    Spi_deinit(spi);
+
+    task_context->task_services.send_data(&task_context->task_services, 0, &rx[ECHO_DELAY_BYTES], len, false);
+    task_context->task_services.send_return(&task_context->task_services, 0, ECHO_RC_OK, false);
 }

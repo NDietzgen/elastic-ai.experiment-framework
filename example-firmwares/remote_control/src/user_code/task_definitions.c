@@ -33,7 +33,7 @@ TaskDefinition task_definition_table[] = {
     {.setup = default_setup,
      .handle = write_to_flash_from_remote,
      .tear_down = default_teardown},
-    {.setup = fast_setup_read_skeleton_id,
+    {.setup = default_setup, // laeuft erst mit dem DUT-Byte aus dem Datenpaket
      .handle = read_skeleton_id,
      .tear_down = default_teardown},
     {.setup = default_setup,
@@ -42,12 +42,15 @@ TaskDefinition task_definition_table[] = {
     {.setup = default_setup,
      .handle = write_to_flash,
      .tear_down = default_teardown},
-    {.setup = default_setup, // 10
+    {.setup = default_setup, 
      .handle = erase_fpga_flash,
      .tear_down = default_teardown},
     
     {.setup = default_setup,
      .handle = compute_sensor_data,
+     .tear_down = default_teardown},
+    {.setup = default_setup, 
+     .handle = fpga_spi_echo,
      .tear_down = default_teardown}
 
 #endif

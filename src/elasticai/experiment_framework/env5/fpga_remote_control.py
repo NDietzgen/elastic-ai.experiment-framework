@@ -3,7 +3,12 @@ from typing import override
 
 from ..remote_control.io_stream import IOStream
 from ..remote_control.remote_control import RemoteControl
-from .config import BYTE_ORDER, TaskDefinitionIds
+from .config import (
+    DEFAULT_DUT,
+    HEADER_BYTES,
+    TaskDefinitionIds,
+    predict_payload,
+)
 from .tasks_registry import (
     FPGAInitTask,
     FPGAWriteToFlashTask,
@@ -40,26 +45,27 @@ class FPGARemoteControl(RemoteControl):
         task = SimpleTask(TaskDefinitionIds.FPGA_CLEAR_FLASH)
         return await self._run_task(task)
 
-    async def read_skeleton_id(self) -> str:
-        task = SimpleTask(TaskDefinitionIds.FPGA_READ_SKELETON_ID)
+    async def read_skeleton_id(self, dut: int = DEFAULT_DUT) -> str:
+        """Liest den 32-Bit-Header des DUT 'dut' (Verilog-Template) als Hex"""
+        task = SimpleTask(TaskDefinitionIds.FPGA_READ_SKELETON_ID, bytes([dut]))
 
         await self._run_task(task)
 
-        return task.result.hex()
+        return task.result[-HEADER_BYTES:].hex()
 
     async def predict(
         self,
         data: bytes,
         result_size: int,
+        dut: int = DEFAULT_DUT,
     ) -> bytes:
-        task = SimpleTask(
-            TaskDefinitionIds.FPGA_PREDICT,
-            result_size.to_bytes(1, BYTE_ORDER) + data,
-        )
+        """Schreibt 'data' ins DUT 'dut', startet es und liest 'result_size' Bytes"""
+        payload, words_bytes = predict_payload(data, result_size, dut)
+        task = SimpleTask(TaskDefinitionIds.FPGA_PREDICT, payload)
 
         await self._run_task(task)
 
-        return task.result
+        return task.result[-words_bytes:][:result_size]
 
     async def upload_bitstream(
         self,
