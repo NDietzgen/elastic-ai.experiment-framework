@@ -1,4 +1,4 @@
-#ifndef FGPA_H
+#ifndef FPGA_H
 #define FPGA_H
 
 #include <stdbool.h>
@@ -10,5 +10,6 @@ void Fpga_powerOff(Fpga *self);
 void Fpga_init(Fpga *self);
 bool Fpga_isBusy(const Fpga *self);
 bool Fpga_isPoweredOn(const Fpga *self);
+void Fpga_setReset(Fpga *self, bool active);
 
 #endif

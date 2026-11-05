@@ -5,6 +5,10 @@ create_clock -add -name clk_100 -period 10 -waveform {0 5} [get_ports { CLK_SYS 
 ## Status
 set_property -dict { PACKAGE_PIN L12 IOSTANDARD LVCMOS33 } [get_ports { FPGA_BUSY }];
 
+## Reset (active-low, asynchron von MCU GPIO13)
+set_property -dict { PACKAGE_PIN M13 IOSTANDARD LVCMOS33 PULLDOWN true } [get_ports { RSTN_MCU }];
+set_false_path -from [get_ports { RSTN_MCU }];
+
 ## SPI
 set_property -dict { PACKAGE_PIN N11 IOSTANDARD LVCMOS33 } [get_ports { SPI_SCLK }];
 set_property -dict { PACKAGE_PIN P12 IOSTANDARD LVCMOS33 } [get_ports { SPI_CSN }];

@@ -130,6 +130,11 @@ void fast_setup_read_skeleton_id(TaskContext *task_context)
     read_skeleton_id(task_context);
 }
 
+void fast_setup_reset_fpga(TaskContext *task_context)
+{
+    reset_fpga(task_context);
+}
+
 // ---------------------------------------------------------------
 void hardware_init(TaskContext *task_context)
 {
@@ -317,10 +322,8 @@ void read_skeleton_id(TaskContext *task_context)
     task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
 }
 
-// Input:  [0] DUT, [1] Ergebnisgroesse in Byte (gerade), [2..] Eingangsdaten
-//         Daten = 16-Bit-Worte, Little Endian, Wort i -> Adresse i
-// Ablauf: DUT waehlen, Worte schreiben, DO_TEST, auf FPGA_BUSY low warten,
-//         Ergebnisworte ab Adresse 0 lesen
+// Input:  [0] DUT, [1] Ergebnisgröße in Byte (gerade), [2..] Eingangsdaten
+// Ablauf: DUT wählen, Worte schreiben, DO_TEST, auf FPGA_BUSY low warten,
 // Output: Ergebnisworte, Little Endian
 void predict(TaskContext *task_context)
 {
@@ -409,12 +412,8 @@ void compute_sensor_data(TaskContext *task_context)
 }
 
 // ---------------------------------------------------------------
-// SPI-Echo-Test der Strecke Pico <-> FPGA (jeder Bitstream aus dem Verilog-Template):
-// SPI_SLAVE_WCLK ist ein 24-Bit-Schieberegister und schiebt jedes empfangene Byte
-// unter demselben CS ECHO_DELAY_BYTES Bytes später wieder auf MISO heraus.
-// Darum werden ECHO_DELAY_BYTES Dummy-Bytes (0x00) angehängt und die Antwort ab
-// rx[ECHO_DELAY_BYTES] zurückgegeben. Die letzten 24 Bit (00 00 00) sieht
-// SPI_MIDDLEWARE als CNTL-Frame ohne gesetzte Bits, also ohne Wirkung.
+// SPI-Echo-Test Pico <-> FPGA: SPI_SLAVE_WCLK gibt jedes Byte um
+// ECHO_DELAY_BYTES verzögert auf MISO zurück, daher Dummy-Bytes anhängen.
 #define ECHO_DELAY_BYTES 3 // SPI_BITWIDTH des Tops (24 Bit) / 8
 #define ECHO_MAX_LEN (TASK_BUFFER_LEN_BYTE - ECHO_DELAY_BYTES)
 #define ECHO_RC_OK 0
@@ -452,4 +451,31 @@ void fpga_spi_echo(TaskContext *task_context)
 
     task_context->task_services.send_data(&task_context->task_services, 0, &rx[ECHO_DELAY_BYTES], len, false);
     task_context->task_services.send_return(&task_context->task_services, 0, ECHO_RC_OK, false);
+}
+
+// ---------------------------------------------------------------
+// Reset über GPIO13 -> RSTN (active-low), FPGA bleibt an.
+// Freigabe per Alarm, damit der Task nicht blockiert.
+#define FPGA_RESET_DURATION_MS 5000
+
+static alarm_id_t reset_release_alarm = 0;
+
+static int64_t release_fpga_reset(alarm_id_t id, void *user_data)
+{
+    (void)id;
+    (void)user_data;
+    Fpga_setReset(Config_getFpga(), false);
+    reset_release_alarm = 0;
+    return 0; // einmalig
+}
+
+void reset_fpga(TaskContext *task_context)
+{
+    if (reset_release_alarm > 0)
+    {
+        cancel_alarm(reset_release_alarm); // laufender Reset wird verlängert
+    }
+    Fpga_setReset(Config_getFpga(), true);
+    reset_release_alarm = add_alarm_in_ms(FPGA_RESET_DURATION_MS, release_fpga_reset, NULL, true);
+    task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
 }

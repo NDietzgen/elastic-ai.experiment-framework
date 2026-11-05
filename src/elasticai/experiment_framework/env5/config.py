@@ -12,6 +12,11 @@ class TaskDefinitionIds(IntEnum):
     FPGA_PREDICT = 0x8
     FPGA_CLEAR_FLASH = 0x0a
     FPGA_SPI_ECHO = 0x0c
+    FPGA_RESET = 0x0d
+
+
+# Dauer, die GPIO13 (RSTN) beim FPGA-Reset low gehalten wird (siehe reset_fpga in der Firmware)
+FPGA_RESET_DURATION_S = 5.0
 
 
 # --- SPI_MIDDLEWARE aus dem Verilog-Template (read_skeleton_id / predict)

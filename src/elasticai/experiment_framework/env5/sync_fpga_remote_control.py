@@ -16,6 +16,7 @@ from ..remote_control.sync_remote_control import (
 )
 from .config import (
     DEFAULT_DUT,
+    FPGA_RESET_DURATION_S,
     HEADER_BYTES,
     TaskDefinitionIds,
     predict_payload,
@@ -62,6 +63,14 @@ class SyncFPGARemoteControl(SyncRemoteControl):
     def fpga_power_off(self, need_ack: bool = False, has_crc: bool = False):
         task = SimpleTask(
             TaskDefinitionIds.FPGA_POWER_OFF,
+            need_ack=need_ack,
+            has_crc=has_crc,
+        )
+        return self._run_task(task)
+
+    def fpga_reset(self, need_ack: bool = False, has_crc: bool = False):
+        task = SimpleTask(
+            TaskDefinitionIds.FPGA_RESET,
             need_ack=need_ack,
             has_crc=has_crc,
         )
@@ -301,6 +310,20 @@ def power_on(control, need_ack, has_crc):
         need_ack=need_ack,
         has_crc=has_crc,
     )
+
+
+@fpga.command("reset")
+@communication_options
+@click.pass_obj
+def reset(control, need_ack, has_crc):
+    """Haelt die FPGA-Logik ueber GPIO13 (RSTN) kurz im Reset, ohne das FPGA abzuschalten."""
+    control.fpga_reset(
+        need_ack=need_ack,
+        has_crc=has_crc,
+    )
+    click.echo(f"FPGA reset active for {FPGA_RESET_DURATION_S:.0f}s ...")
+    time.sleep(FPGA_RESET_DURATION_S)
+    click.echo("FPGA reset released.")
 
 
 @fpga.command("clear-flash")

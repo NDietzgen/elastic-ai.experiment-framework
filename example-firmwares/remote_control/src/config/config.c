@@ -20,7 +20,7 @@ Fpga *Config_getFpga(void)
       .busy = 15,
       .mos_fets_enable = 21,
       .voltage_regulator_enable = 23,
-      .reset = 12};
+      .reset = 13}; // GPIO13 (Pin 16) -> RSTN des FPGA-Tops, active-low
   static Fpga fpga = {
       .pins = &env5_fpga_pins,
       .is_powered = 0};
