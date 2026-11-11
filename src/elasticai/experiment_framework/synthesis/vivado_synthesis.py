@@ -43,6 +43,10 @@ _SYNTH_SSH_PORT_ENVVARS = ("SYNTH_SSH_PORT",)
 _SYNTH_TARGET_ENVVARS = ("SYNTH_TARGET",)
 _SYNTH_REMOTE_WORKING_DIR_ENVVARS = ("SYNTH_REMOTE_WORKING_DIR",)
 _SYNTH_VIVADO_PATH_ENVVARS = ("SYNTH_VIVADO_PATH",)
+_SYNTH_TOP_ENVVARS = ("SYNTH_TOP",)
+
+# Dateien aus src_dir, die ins Archiv für den Synthese-Server kommen
+_SRC_PATTERNS = ("**/*.vhd", "**/*.v", "**/*.sv", "**/*.vh", "**/*.mem")
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,8 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class _SynthesisConfig(_SynthConfig):
     vivado_path: str = "/tools/Xilinx/Vivado/2023.1/bin/vivado"
+    # Name des Top-Moduls; leer = Vivado wählt es automatisch
+    top: str = ""
 
 
 class CachedVivadoSynthesis(CachedSynthesis[_SynthesisConfig]):
@@ -94,6 +100,7 @@ class VivadoSynthesis(_SynthStrat):
             f"{config.working_dir}/{config.key}/",
             config.vivado_path,
             config.quiet,
+            config.top,
         )
         return _run_synthesis(Path(src_dir), old_style_config, out_path)
 
@@ -107,6 +114,7 @@ class _OldSynthConfig:
     remote_working_dir: str
     vivado_path: str
     quiet: bool
+    top: str = ""
 
 
 def _run_synthesis(
@@ -156,6 +164,7 @@ def _run_synthesis(
                 part_number=_fpga_model_for_platform[TargetPlatforms(config.target)],
                 remote_working_dir=config.remote_working_dir,
                 num_jobs=12,
+                top=config.top,
             )
             logger.info("archiving srcs")
             srcs_archive = _create_srcs_archive(tmp_dir, src_dir)
@@ -256,9 +265,23 @@ def _run_synthesis(
     default="/tools/Xilinx/Vivado/2023.1/bin/vivado",
     help="The path to the vivado executable on the remote host",
 )
+@click.option(
+    "--top",
+    envvar=_SYNTH_TOP_ENVVARS,
+    default="",
+    help="Name of the top module, e.g. TOP_MODULE. If empty, Vivado detects it.",
+)
 @click.option("--quiet", is_flag=True)
 def main(
-    src_dir, host, ssh_user, ssh_port, target, remote_working_dir, vivado_path, quiet
+    src_dir,
+    host,
+    ssh_user,
+    ssh_port,
+    target,
+    remote_working_dir,
+    vivado_path,
+    top,
+    quiet,
 ):
     """Generate FPGA bitstreams remotely.
 
@@ -285,6 +308,7 @@ def main(
             remote_working_dir=remote_working_dir,
             vivado_path=vivado_path,
             quiet=quiet,
+            top=top,
         ),
     )
 
@@ -306,6 +330,7 @@ if {[catch {
     add_files -fileset sources_1 ${remote_working_dir}/${srcs_dir}
     add_files -fileset constrs_1 -norecurse \
 ${remote_working_dir}/${srcs_dir}/constraints.xdc
+${set_top}
     update_compile_order -fileset sources_1
 
     # STEP#2: Run synthesis
@@ -329,8 +354,9 @@ exit
 def _create_srcs_archive(tmp_dir: Path, src_dir: Path) -> Path:
     result = tmp_dir / _SRCS_FILE_NAME
     with tar_open(result, "w:gz") as tar_file:
-        for src_file in src_dir.glob("**/*.vhd"):
-            tar_file.add(src_file, str(src_file.relative_to(src_dir)))
+        for pattern in _SRC_PATTERNS:
+            for src_file in src_dir.glob(pattern):
+                tar_file.add(src_file, str(src_file.relative_to(src_dir)))
 
         for src_file in src_dir.glob("**/*.xdc"):
             tar_file.add(src_file, "constraints.xdc")
@@ -345,7 +371,9 @@ def _write_tcl_script(
     part_number: str,
     remote_working_dir: str,
     num_jobs: int,
+    top: str = "",
 ) -> None:
+    set_top = f"    set_property top {top} [current_fileset]" if top else ""
     (tmp_dir / _TCL_SCRIPT_NAME).write_text(
         _tcl_script_content_tpl.safe_substitute(
             remote_working_dir=remote_working_dir,
@@ -353,6 +381,7 @@ def _write_tcl_script(
             project_name=project_name,
             num_jobs=num_jobs,
             part_number=part_number,
+            set_top=set_top,
         )
     )
 

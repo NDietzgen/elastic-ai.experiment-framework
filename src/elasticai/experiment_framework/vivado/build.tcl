@@ -29,6 +29,8 @@ set srcs [find_files $src_dir {*.v *.sv}]
 if {[llength $srcs] == 0} { error "Keine .v/.sv-Dateien in $src_dir" }
 # Speicher-Initialisierungsdateien für $readmemh/$readmemb (z. B. bram_preload.mem)
 set mems [find_files $src_dir {*.mem}]
+# Verilog-Header für `include (z. B. user/dut_config.vh), nur zur Übersicht im Projekt
+set hdrs [find_files $src_dir {*.vh *.svh}]
 if {![file exists $src_xdc]} { error "Datei nicht gefunden: $src_xdc" }
 
 puts "Quelldateien: [llength $srcs]"
@@ -38,6 +40,10 @@ foreach f $srcs { puts "  $f" }
 create_project -force $proj_name $proj_dir/$proj_name -part $part
 add_files -norecurse $srcs
 if {[llength $mems] > 0} { add_files -norecurse $mems }
+if {[llength $hdrs] > 0} {
+    add_files -norecurse $hdrs
+    set_property file_type {Verilog Header} [get_files $hdrs]
+}
 add_files -fileset constrs_1 -norecurse $src_xdc
 set_property top $top [current_fileset]
 update_compile_order -fileset sources_1

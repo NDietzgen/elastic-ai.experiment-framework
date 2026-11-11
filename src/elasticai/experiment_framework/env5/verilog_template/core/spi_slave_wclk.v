@@ -12,6 +12,7 @@
 //
 // State: 	        Tested!
 // Improvements:    - If read then catch data from middleware
+//                  - CSN per 2-FF synchronisiert (vorher sporadische Frame-Fehler)
 // Parameters:      BITWIDTH    --> Bitwidth of SPI packet
 //                  CPOL        --> Polarity of the SPI SCLK
 //                  CPHA        --> Polarity for sensing and writing MISO/MOSI
@@ -43,6 +44,15 @@ reg [BITWIDTH-'d1:0] buffer;
 reg sclk_buf, mosi_buf, sclk_dly, miso_bit;
 wire sclk_falling, sclk_rising, sclk_set, sclk_smp;
 
+// --- CSN ist asynchron zu CLK_SYS und steuert mehrere Register gleichzeitig
+// (state, buffer, miso_bit, DRDY). Ohne Synchronisierung sehen diese Register
+// bei einer Flanke nahe CLK_SYS teils den alten, teils den neuen Pegel:
+// buffer wird nicht geladen (falsche Antwort) oder DRDY bleibt high
+// (Middleware verpasst den Frame). Daher 2-FF-Synchronisierer.
+(* ASYNC_REG = "TRUE" *) reg [1:0] csn_sync = 2'b11;
+wire csn_s = csn_sync[1];
+always@(posedge CLK_SYS) csn_sync <= {csn_sync[0], CSN};
+
 assign MISO = (CSN) ? 1'dZ : miso_bit;
 
 // --- Edge detection for different SPI modes
@@ -68,7 +78,7 @@ always@(posedge CLK_SYS) begin
 		
 		case(state)
 		STATE_IDLE: begin
-			if(!CSN) begin
+			if(!csn_s) begin
 				state <= STATE_SAMPLE;
 				buffer <= DFROM_MIDDLEWARE;
 				miso_bit <= (MSB) ? DFROM_MIDDLEWARE[BITWIDTH-'d1] : DFROM_MIDDLEWARE[0];
@@ -79,7 +89,7 @@ always@(posedge CLK_SYS) begin
 			end
 		end
 		STATE_WRITE: begin
-			if(CSN) begin
+			if(csn_s) begin
 				state <= STATE_DONE;
 			end else if(sclk_set) begin
 				miso_bit <= (MSB) ? buffer[BITWIDTH-'d1] : buffer[0];
@@ -89,7 +99,7 @@ always@(posedge CLK_SYS) begin
 			end
 		end
 		STATE_SAMPLE: begin
-			if(CSN) begin
+			if(csn_s) begin
 				state <= STATE_DONE;
 			end else if(sclk_smp) begin
 				buffer <= (MSB) ? {buffer[BITWIDTH-'d2:0], mosi_buf} : {mosi_buf, buffer[BITWIDTH-'d1:'d1]};

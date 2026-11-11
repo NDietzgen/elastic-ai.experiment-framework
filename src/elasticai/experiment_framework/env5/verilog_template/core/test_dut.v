@@ -1,9 +1,12 @@
 module TEST_ENVIRONMENT#(
+    parameter DUT_TYPE = "USER",
+    parameter integer DUT_BITWIDTH_IN = 16,
     parameter integer BITWIDTH_DATA = 16,
     parameter integer BITWIDTH_ADR = 6,
     parameter integer NUM_DUT = 2,
     parameter integer NUM_BITS_HEADER = 32,
-    parameter integer UINT_DATATYPE = 1
+    parameter integer UINT_DATATYPE = 1,
+    parameter integer NUM_LEDS = 4
 )(
     input wire CLK,
     input wire RSTN,
@@ -14,7 +17,8 @@ module TEST_ENVIRONMENT#(
     input wire [BITWIDTH_DATA-'d1:0] DATA_IN,
     output wire [BITWIDTH_DATA-'d1:0] DATA_OUT,
     output wire [NUM_BITS_HEADER-'d1:0] HEAD_INFO, 
-    output wire RDY_FLAG
+    output wire RDY_FLAG,
+    output wire [NUM_LEDS-'d1:0] DUT_LEDS
 );
 
     localparam BITWIDTH_HEAD = NUM_BITS_HEADER - 'd6;
@@ -55,21 +59,27 @@ module TEST_ENVIRONMENT#(
         .DATA_VALID(rdy_filt[1])
     );    
         
-    SKELETON_RAM#(
-        .BITWIDTH_IN('d16),
+    // DUT under test: selected by DUT_TYPE / DUT_BITWIDTH_IN in TOP_MODULE
+    SKELETON#(
+        .DUT_TYPE(DUT_TYPE),
+        .BITWIDTH_IN(DUT_BITWIDTH_IN),
         .BITWIDTH_SYS(BITWIDTH_DATA),
-        .BITWIDTH_HEAD(BITWIDTH_HEAD)
+        .BITWIDTH_HEAD(BITWIDTH_HEAD),
+        .BITWIDTH_ADR(BITWIDTH_ADR),
+        .NUM_LEDS(NUM_LEDS)
     ) DUT_02 (
         .CLK_SYS(CLK),
         .RSTN(RSTN),
-		.EN(SEL == 'd2),
-		.RnW(RnW),
-		.ADR(ADR),
-		.TRGG_START_CALC(START_FLAG),
-		.DATA_IN(DATA_IN),
-		.DATA_OUT(dout[2]),
-		.DATA_HEAD(head_array[2]),
-		.RDY(rdy_filt[2])
+        .EN(SEL == 'd2),
+        .RnW(RnW),
+        .ADR(ADR),
+        .TRGG_START_CALC(START_FLAG),
+        .DATA_IN(DATA_IN),
+        .DATA_OUT(dout[2]),
+        .DATA_HEAD(head_array[2]),
+        .RDY(rdy_filt[2]),
+        .DATA_VALID(),
+        .LEDS(DUT_LEDS)
     );  
         
 endmodule

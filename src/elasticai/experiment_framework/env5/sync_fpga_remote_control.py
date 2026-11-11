@@ -316,7 +316,7 @@ def power_on(control, need_ack, has_crc):
 @communication_options
 @click.pass_obj
 def reset(control, need_ack, has_crc):
-    """Haelt die FPGA-Logik ueber GPIO13 (RSTN) kurz im Reset, ohne das FPGA abzuschalten."""
+    """Hält die FPGA-Logik über GPIO13 (RSTN) kurz im Reset, ohne das FPGA abzuschalten."""
     control.fpga_reset(
         need_ack=need_ack,
         has_crc=has_crc,

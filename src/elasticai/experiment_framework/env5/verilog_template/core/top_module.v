@@ -1,20 +1,35 @@
+//////////////////////////////////////////////////////////////////////////////////
+// Module Name:     TOP_MODULE (ENV5-Testumgebung)
+// Description:     Verbindet SPI-Schnittstelle, Testumgebung und das zu testende
+//                  Modul (DUT). Das DUT wird in dut_config.vh im DUT-Ordner
+//                  ausgewählt, diese Datei muss nicht geändert werden.
+//                  Anleitung und Referenz: README.md
+//////////////////////////////////////////////////////////////////////////////////
+
+`include "../user/dut_config.vh"
+
 module TOP_MODULE#(
-    parameter integer NUM_DUT = 2,
+    // ---------------- DUT-Auswahl: in user/dut_config.vh setzen -
+    parameter DUT_TYPE                      = `DUT_TYPE,
+    parameter integer DUT_BITWIDTH_IN       = `DUT_BITWIDTH_IN, // <= TEST_ENV_DATA_BITWIDTH
+    // ---------------- Systemparameter (nicht ändern) -----------
+    parameter integer NUM_DUT               = 2,
+    parameter integer NUM_LEDS              = 4,
     parameter integer TEST_ENV_CMDS_BITWIDTH = 2,
-    parameter integer TEST_ENV_ADR_WIDTH = 6,
+    parameter integer TEST_ENV_ADR_WIDTH    = 6,
     parameter integer TEST_ENV_DATA_BITWIDTH = 16
 )(
     // --- Global signals
-    input wire          CLK_SYS,
-    input wire          RSTN_MCU,               // active-low, asynchron von MCU (Pin M13)
+    input wire                  CLK_SYS,
+    input wire                  RSTN_MCU,       // active-low, asynchron von MCU (Pin M13)
     // --- General purpose I/O
-    output wire         LED,
-    output wire         FPGA_BUSY,
+    output wire [NUM_LEDS-1:0]  LEDS,
+    output wire                 FPGA_BUSY,
     // --- SPI Communication
-    output wire         SPI_MISO,
-    input wire          SPI_MOSI,
-    input wire          SPI_SCLK,
-    input wire          SPI_CSN
+    output wire                 SPI_MISO,
+    input wire                  SPI_MOSI,
+    input wire                  SPI_SCLK,
+    input wire                  SPI_CSN
 );
 
 	localparam SPI_BITWIDTH = TEST_ENV_CMDS_BITWIDTH + TEST_ENV_ADR_WIDTH + TEST_ENV_DATA_BITWIDTH;
@@ -23,10 +38,10 @@ module TOP_MODULE#(
     //##########################################################
     //RESET-SYNCHRONISIERUNG
     // RSTN_MCU von der MCU ist asynchron: 2-FF-Kette synchronisiert Setzen und Freigeben auf CLK_SYS,
-    // damit alle Module gleichzeitig und ohne Metastabilitaet starten (2 Takte Verzoegerung).
+    // damit alle Module gleichzeitig und ohne Metastabilität starten (2 Takte Verzögerung).
     (* ASYNC_REG = "TRUE" *) reg [1:0] rstn_sync = 2'b00;
     always @(posedge CLK_SYS) rstn_sync <= {rstn_sync[0], RSTN_MCU};
-    wire RSTN = rstn_sync[1];                   // synchronisierter Reset fuer alle Untermodule
+    wire RSTN = rstn_sync[1];                   // synchronisierter Reset für alle Untermodule
 
     //Signals for SPI module
     wire spi_mod_rdy;
@@ -41,14 +56,22 @@ module TOP_MODULE#(
     //Interface for Debugging modules
     assign FPGA_BUSY = !dut_rdy;
 
+    // LEDs: USER-DUT steuert alle LEDs, sonst LEDS[0] über SPI (LED_CONTROL)
+    wire led_spi;
+    wire [NUM_LEDS-'d1:0] dut_leds;
+    assign LEDS = (DUT_TYPE == "USER") ? dut_leds : {{(NUM_LEDS-1){1'd0}}, led_spi};
+
     //##########################################################
     //UNTER-MODULE: DEVICE UNDER TEST
     TEST_ENVIRONMENT#(
+        .DUT_TYPE(DUT_TYPE),
+        .DUT_BITWIDTH_IN(DUT_BITWIDTH_IN),
         .NUM_DUT(NUM_DUT),
         .BITWIDTH_DATA(TEST_ENV_DATA_BITWIDTH),
         .BITWIDTH_ADR(TEST_ENV_ADR_WIDTH),
         .NUM_BITS_HEADER(TEST_HEAD_BITWIDTH),
-        .UINT_DATATYPE(1'd1)
+        .UINT_DATATYPE(1'd1),
+        .NUM_LEDS(NUM_LEDS)
     ) DUT(
         .CLK(CLK_SYS),
         .RSTN(RSTN),
@@ -59,7 +82,8 @@ module TOP_MODULE#(
         .DATA_IN(dut_din),
         .DATA_OUT(dut_dout),
         .HEAD_INFO(dut_header),
-        .RDY_FLAG(dut_rdy)
+        .RDY_FLAG(dut_rdy),
+        .DUT_LEDS(dut_leds)
     );
 
     //##########################################################
@@ -93,7 +117,7 @@ module TOP_MODULE#(
         .FIFO_RDY(spi_mod_rdy),
         .FIFO_DIN(data_spi_to_mid),
         .FIFO_DOUT(data_mid_to_spi),
-        .LED_CONTROL(LED),
+        .LED_CONTROL(led_spi),
         .DUT_DO_TEST(dut_start_flag),
         .DUT_SEL(dut_sel),
         .DUT_DIN(dut_din),

@@ -4,7 +4,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from vivado_reports import BuildMetrics, parse_reports
+from elasticai.experiment_framework.env5.verilog_project import (
+    CONSTRAINTS,
+    TOP,
+    assemble_project,
+)
+
+from .reports import BuildMetrics, parse_reports
 
 HERE = Path(__file__).parent
 
@@ -20,13 +26,13 @@ def to_wsl(p):
 @dataclass
 class BuildConfig:
     part: str
-    top: str
-    src_dir: Path      # WSL-Pfad, Ordner mit allen .v/.sv-Dateien
-    src_xdc: Path      # WSL-Pfad
+    dut_dir: Path      # WSL-Pfad, DUT-Ordner (dut_config.vh + Quellen), Kern kommt dazu
     proj_name: str
     proj_dir: str      # Windows-Pfad, z. B. r"C:\Users\Nils\vivado_tmp"
     vivado: str        # Windows-Pfad zur vivado.bat
     jobs: int
+    top: str = TOP
+    src_xdc: Path = CONSTRAINTS  # WSL-Pfad
 
     @property
     def work_cwd(self) -> Path:
@@ -82,6 +88,21 @@ def check_vivado(cfg: BuildConfig) -> bool:
     return "vivado v" in result.stdout.lower()
 
 
+def _stage_sources(cfg: BuildConfig) -> tuple[Path, Path]:
+    """Setzt Kern und DUT-Ordner im Windows-Projektordner zusammen (core/ + user/).
+
+    Die Quellen liegen im Repo unter WSL. Vivado läuft unter Windows und käme nur
+    über \\\\wsl.localhost\\... an sie heran, was Vivado nicht zuverlässig kann.
+    Die Kopie wird bei jedem Build neu angelegt, damit keine alten Dateien bleiben.
+    Die Constraints liegen als eigene Datei daneben, damit build.tcl sie nicht
+    zusätzlich als Quelle einsammelt.
+    """
+    staged = assemble_project(cfg.dut_dir, cfg.work_cwd / f"{cfg.proj_name}_srcs")
+    (staged / "core" / cfg.src_xdc.name).unlink(missing_ok=True)
+    xdc = Path(shutil.copy2(cfg.src_xdc, cfg.work_cwd / f"{cfg.proj_name}.xdc"))
+    return staged, xdc
+
+
 def build_bitstream(cfg: BuildConfig, output_dir: Path | None = None) -> Path:
     """Baut das Projekt bis zum Bitstream und gibt den Pfad (WSL) zur .bit-Datei zurück.
 
@@ -90,6 +111,7 @@ def build_bitstream(cfg: BuildConfig, output_dir: Path | None = None) -> Path:
     """
     start = time.time() - 2
 
+    src_dir, src_xdc = _stage_sources(cfg)
     result = run_vivado(
         cfg,
         "-mode", "batch",
@@ -99,8 +121,8 @@ def build_bitstream(cfg: BuildConfig, output_dir: Path | None = None) -> Path:
         "-top", cfg.top,
         "-proj_name", cfg.proj_name,
         "-proj_dir", cfg.proj_dir,
-        "-src_dir", to_win(cfg.src_dir),
-        "-src_xdc", to_win(cfg.src_xdc),
+        "-src_dir", to_win(src_dir),
+        "-src_xdc", to_win(src_xdc),
         "-jobs", str(cfg.jobs),
     )
     log = result.stdout + result.stderr

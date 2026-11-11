@@ -9,7 +9,8 @@ from elasticai.experiment_framework.env5.sync_fpga_remote_control import (
 
 logger = logging.getLogger(__name__)
 
-BIT_STREAM_PATH = Path("tests/fpga/TOP_MODULE_1.bit")  # LED Test
+# Bitstream aus dem Vivado-Test des Reset-Tests (tests/vivado/duts/reset_test/test_build.py)
+BIT_STREAM_PATH = Path("tests/vivado/artifacts/env5_reset_test/TOP_MODULE.bit")
 
 
 @pytest.fixture(scope="session")

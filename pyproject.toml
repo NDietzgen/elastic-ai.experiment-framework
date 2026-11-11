@@ -76,6 +76,7 @@ command_line = "-m pytest tests/unit"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+addopts = "--import-mode=importlib"  # Testdateien brauchen keine __init__.py
 markers = ["hardware: requires physical hardware to be connected"]
 log_cli = true
 log_cli_level = "DEBUG"
