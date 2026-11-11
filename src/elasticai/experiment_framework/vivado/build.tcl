@@ -25,8 +25,8 @@ proc find_files {dir patterns} {
     return $found
 }
 
-set srcs [find_files $src_dir {*.v *.sv}]
-if {[llength $srcs] == 0} { error "Keine .v/.sv-Dateien in $src_dir" }
+set srcs [find_files $src_dir {*.v *.sv *.vhd *.vhdl}]
+if {[llength $srcs] == 0} { error "Keine .v/.sv/.vhd-Dateien in $src_dir" }
 # Speicher-Initialisierungsdateien für $readmemh/$readmemb (z. B. bram_preload.mem)
 set mems [find_files $src_dir {*.mem}]
 # Verilog-Header für `include (z. B. user/dut_config.vh), nur zur Übersicht im Projekt

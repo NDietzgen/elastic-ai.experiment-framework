@@ -34,7 +34,7 @@ Ein DUT-Ordner liegt irgendwo, zum Beispiel unter `tests/vivado/duts/<name>/`:
 ├── dut_config.vh             Pflicht       Klasse, Bitbreite, Modulname
 ├── <dein Modul>.v            Pflicht       DUT, Untermodule, .mem-Dateien
 ├── dut_wrapper_user.v        nur "USER"    Anbindung des eigenen Moduls
-├── test_build_<name>.py                    Build-Test (siehe Build)
+├── test_<name>.py                          Build- und Hardware-Test (siehe Build)
 └── top_module.v              optional      ersetzt core/top_module.v (Sonderfall)
 ```
 
@@ -192,19 +192,31 @@ Die Nutzdaten liegen **linksbündig (MSB)** auf dem 16-Bit-Bus:
 
 ### Build
 
-**Lokal (Vivado unter Windows, aus WSL):** über das Paket
-`elasticai.experiment_framework.vivado` (`BuildConfig`, `build_bitstream`,
-`read_metrics`). Jeder DUT-Ordner unter `tests/vivado/duts/` hat einen eigenen
-Test `test_build_<name>.py`, der genau diesen Ordner baut. Bitstream und Reports landen in
+**Lokal (Vivado unter Windows, aus WSL):** mit `LocalVivadoSynthesis` aus
+`elasticai.experiment_framework.synthesis`. Sie hat dieselbe Schnittstelle wie
+die Remote-Variante und baut einen DUT-Ordner (Kern kommt automatisch dazu)
+oder einen beliebigen Ordner mit HDL-Quellen. Der FPGA-Typ wird über `part`
+angegeben, leer = passend zu `target` (`env5` = xc7s15, `env5_s50` = xc7s50).
+
+```python
+from elasticai.experiment_framework.synthesis import LocalSynthesisConfig, LocalVivadoSynthesis
+
+synth = LocalVivadoSynthesis().set_config(LocalSynthesisConfig(part="xc7s50ftgb196-1"))
+synth.synthesize("tests/vivado/duts/subsampler", "build/subsampler")  # .bit, Reports, metrics.json
+```
+
+Jeder DUT-Ordner unter `tests/vivado/duts/` hat einen eigenen Test, der genau
+diesen Ordner baut (FPGA-Typ steht im Test). Bitstream und Reports landen in
 `tests/vivado/artifacts/env5_<name>/`.
 
 ```bash
 pytest tests/vivado                       # alle DUTs
 pytest tests/vivado/duts/reset_test       # ein DUT
+pytest tests/vivado -m "not hardware"     # nur bauen, ohne Board
 ```
 
 Für ein neues DUT kopierst du den Test aus einem bestehenden DUT-Ordner mit
-und benennst ihn in `test_build_<name>.py` um. Er baut automatisch den Ordner,
+und benennst ihn in `test_<name>.py` um. Er baut automatisch den Ordner,
 in dem er liegt.
 
 **Remote (`vivado_synthesis.py`):** zuerst zusammensetzen, dann synthetisieren:

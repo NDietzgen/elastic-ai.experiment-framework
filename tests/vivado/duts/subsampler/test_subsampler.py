@@ -5,19 +5,15 @@ import pytest
 from elasticai.experiment_framework.env5.sync_fpga_remote_control import (
     SyncFPGARemoteControl,
 )
-from elasticai.experiment_framework.vivado import (
-    BuildConfig,
-    build_bitstream,
-    check_vivado,
-    read_metrics,
+from elasticai.experiment_framework.synthesis import (
+    LocalSynthesisConfig,
+    LocalVivadoSynthesis,
 )
+from elasticai.experiment_framework.vivado import read_metrics
 
 logger = logging.getLogger(__name__)
 
 # ----------------------------------------------------------------------------- Build
-VIVADO = r"C:\AMDDesignTools\2026.1\Vivado\bin\vivado.bat"   # Windows-Pfad
-PROJ_DIR = r"C:\Users\Nils\vivado_tmp"                       # Windows-Pfad
-
 # DUT-Ordner = Ordner dieser Datei (dut_config.vh + Quellen).
 # Der feste Kern (verilog_template/core/) wird beim Build automatisch dazugenommen.
 DUT_DIR = Path(__file__).parent
@@ -25,16 +21,17 @@ DUT_DIR = Path(__file__).parent
 # Gemeinsame Ablage aller DUTs für Bitstreams, Reports und builds.csv (WSL-Pfad)
 ARTIFACTS = Path(__file__).parents[2] / "artifacts"
 
-CFG = BuildConfig(
-    part="xc7s50ftgb196-1",
-    dut_dir=DUT_DIR,
-    proj_name=f"env5_{DUT_DIR.name}",  # Vivado-Projekt, wird neu erstellt
-    proj_dir=PROJ_DIR,  # Zielordner für das Projekt (von Vivado/TCL genutzt)
-    vivado=VIVADO,      # Pfad zu lokalem Vivado
-    jobs=4,
+SYNTH = LocalVivadoSynthesis().set_config(
+    LocalSynthesisConfig(
+        part="xc7s50ftgb196-1",  # FPGA-Typ des Boards
+        vivado_path=r"C:\AMDDesignTools\2026.1\Vivado\bin\vivado.bat",  # Windows-Pfad
+        proj_dir=r"C:\Users\Nils\vivado_tmp",  # Windows-Pfad, Vivado-Projekt
+        jobs=4,
+    )
 )
+CFG = SYNTH.build_config(DUT_DIR)  # Projektname env5_<Ordnername>, Pfade, Part
 OUTPUT_DIR = ARTIFACTS / CFG.proj_name
-BIT_STREAM_PATH = OUTPUT_DIR / "TOP_MODULE.bit"
+BIT_STREAM_PATH = OUTPUT_DIR / f"{CFG.top}.bit"
 
 # -------------------------------------------------------------------------- Hardware
 DUT = 2       # SEL = 2: DUT unter Test
@@ -44,21 +41,22 @@ INPUTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]  # nicht 0, das ist der Reset-W
 
 # ============================================================================= Build
 def test_vivado_available():
-    assert check_vivado(CFG), "Vivado ist nicht verfügbar!"
+    assert SYNTH.check(), "Vivado ist nicht verfügbar!"
 
 
 def test_bitstream_build():
     start = time.time()
-    bit = build_bitstream(CFG, output_dir=OUTPUT_DIR)
+    SYNTH.synthesize(DUT_DIR, OUTPUT_DIR)  # Bitstream, Reports und metrics.json
 
-    assert bit.exists() and bit.suffix == ".bit"
+    bit = OUTPUT_DIR / f"{CFG.top}.bit"
+    assert bit.exists() and bit.stat().st_mtime >= start - 2, "Bitstream nicht frisch"
     assert CFG.xpr.exists(), f"Projektdatei fehlt: {CFG.xpr}"
     assert CFG.xpr.stat().st_mtime >= start - 2, "Projektdatei nicht frisch erzeugt"
 
 
 def test_build_metrics():
-    # nutzt die Reports aus test_bitstream_build, startet Vivado nicht erneut
-    metrics = read_metrics(CFG, output_dir=OUTPUT_DIR)
+    # liest die Reports aus test_bitstream_build, startet Vivado nicht erneut
+    metrics = read_metrics(CFG)
     print(metrics.summary())
     metrics.append_csv(ARTIFACTS / "builds.csv")
 

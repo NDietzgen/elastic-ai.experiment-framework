@@ -26,7 +26,9 @@ def to_wsl(p):
 @dataclass
 class BuildConfig:
     part: str
-    dut_dir: Path      # WSL-Pfad, DUT-Ordner (dut_config.vh + Quellen), Kern kommt dazu
+    # WSL-Pfad. DUT-Ordner (mit dut_config.vh): Kern kommt automatisch dazu.
+    # Sonst beliebiger Ordner mit HDL-Quellen, der unverändert gebaut wird.
+    dut_dir: Path
     proj_name: str
     proj_dir: str      # Windows-Pfad, z. B. r"C:\Users\Nils\vivado_tmp"
     vivado: str        # Windows-Pfad zur vivado.bat
@@ -88,8 +90,17 @@ def check_vivado(cfg: BuildConfig) -> bool:
     return "vivado v" in result.stdout.lower()
 
 
+def is_dut_dir(path: Path) -> bool:
+    """True, wenn path ein DUT-Ordner des Verilog-Templates ist (mit dut_config.vh)."""
+    return (Path(path) / "dut_config.vh").is_file()
+
+
 def _stage_sources(cfg: BuildConfig) -> tuple[Path, Path]:
-    """Setzt Kern und DUT-Ordner im Windows-Projektordner zusammen (core/ + user/).
+    """Kopiert die Quellen in den Windows-Projektordner.
+
+    DUT-Ordner: Kern und DUT-Ordner werden zusammengesetzt (core/ + user/),
+    Constraints aus cfg.src_xdc. Anderer Ordner: unverändert kopiert, Constraints
+    aus der einen .xdc im Ordner, falls vorhanden, sonst cfg.src_xdc.
 
     Die Quellen liegen im Repo unter WSL. Vivado läuft unter Windows und käme nur
     über \\\\wsl.localhost\\... an sie heran, was Vivado nicht zuverlässig kann.
@@ -97,9 +108,24 @@ def _stage_sources(cfg: BuildConfig) -> tuple[Path, Path]:
     Die Constraints liegen als eigene Datei daneben, damit build.tcl sie nicht
     zusätzlich als Quelle einsammelt.
     """
-    staged = assemble_project(cfg.dut_dir, cfg.work_cwd / f"{cfg.proj_name}_srcs")
-    (staged / "core" / cfg.src_xdc.name).unlink(missing_ok=True)
-    xdc = Path(shutil.copy2(cfg.src_xdc, cfg.work_cwd / f"{cfg.proj_name}.xdc"))
+    dest = cfg.work_cwd / f"{cfg.proj_name}_srcs"
+    src_xdc = cfg.src_xdc
+    if is_dut_dir(cfg.dut_dir):
+        staged = assemble_project(cfg.dut_dir, dest)
+    else:
+        if dest.exists():
+            shutil.rmtree(dest)
+        staged = Path(shutil.copytree(
+            cfg.dut_dir, dest, ignore=shutil.ignore_patterns("__pycache__", "*.py", "*.pyc")
+        ))
+        own_xdcs = sorted(staged.rglob("*.xdc"))
+        if len(own_xdcs) > 1:
+            raise ValueError(f"Mehr als eine .xdc in {cfg.dut_dir}: {own_xdcs}")
+        if own_xdcs:
+            src_xdc = own_xdcs[0]
+    xdc = Path(shutil.copy2(src_xdc, cfg.work_cwd / f"{cfg.proj_name}.xdc"))
+    for f in staged.rglob("*.xdc"):
+        f.unlink()
     return staged, xdc
 
 

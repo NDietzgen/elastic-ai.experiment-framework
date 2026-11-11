@@ -31,7 +31,10 @@ from ._connection_fabric import ConnectionWrapperForFabric as _fabConnectionWrap
 from ._connection_invoke import ConnectionWrapperForInvoke as _invokeConnection
 from .verbosity import Verbosity
 
-_fpga_model_for_platform = {TargetPlatforms.env5: "xc7s15ftgb196-2"}
+_fpga_model_for_platform = {
+    TargetPlatforms.env5: "xc7s15ftgb196-2",
+    TargetPlatforms.env5_s50: "xc7s50ftgb196-1",
+}
 
 _SRCS_FILE_BASE_NAME = "synth_srcs"
 _SRCS_FILE_NAME = f"{_SRCS_FILE_BASE_NAME}.tar.gz"

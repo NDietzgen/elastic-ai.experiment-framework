@@ -1,3 +1,4 @@
+from .local_vivado_synthesis import LocalSynthesisConfig, LocalVivadoSynthesis
 from .synthesis import (
     CachedSynthesis,
     SynthesisConfig,
@@ -18,6 +19,8 @@ __all__ = [
     "load_synthesis_config_from_env",
     "CachedVivadoSynthesis",
     "VivadoSynthesis",
+    "LocalSynthesisConfig",
+    "LocalVivadoSynthesis",
     "CachedSynthesis",
     "SynthesisStrategy",
     "SynthesisConfig",

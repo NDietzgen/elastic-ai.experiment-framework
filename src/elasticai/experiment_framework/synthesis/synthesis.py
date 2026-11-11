@@ -12,7 +12,8 @@ from typing import Protocol, Self, override, runtime_checkable
 
 
 class TargetPlatforms(StrEnum):
-    env5 = auto()
+    env5 = auto()      # xc7s15ftgb196-2
+    env5_s50 = auto()  # xc7s50ftgb196-1
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,9 @@ class SynthesisStrategy[S: SynthesisConfig](Protocol):
 class CachedSynthesis[S: SynthesisConfig](SynthesisStrategy):
     def __init__(self, wrapped: SynthesisStrategy[S]) -> None:
         self._wrapped = wrapped
-        self._includes: tuple[str, ...] = ("**/*.vhd", "**/*.v", "**/*.xdc")
+        self._includes: tuple[str, ...] = (
+            "**/*.vhd", "**/*.v", "**/*.sv", "**/*.vh", "**/*.mem", "**/*.xdc"
+        )
         self._excludes: tuple[str, ...] = tuple()
         self._logger = logging.getLogger(__name__)
 
@@ -70,9 +73,8 @@ class CachedSynthesis[S: SynthesisConfig](SynthesisStrategy):
         return self
 
     @override
-    def get_config(self) -> Self:
-        self._wrapped.get_config()
-        return self
+    def get_config(self) -> S:
+        return self._wrapped.get_config()
 
     def include(self, globs: Iterable[str]) -> None:
         self._includes = tuple(globs)
@@ -93,7 +95,7 @@ class CachedSynthesis[S: SynthesisConfig](SynthesisStrategy):
         src_dir = Path(src_dir)
         digest = self._compute_hash(src_dir)
         cache_dir = self._normalize_cache_dir(cache_dir)
-        cache_dir.mkdir(exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
         digest_dir = cache_dir / ("/".join([digest[0:3], digest[3:]]) + "/")
         digest_dir.parent.mkdir(exist_ok=True)
 
