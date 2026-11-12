@@ -1,16 +1,4 @@
-"""Zusammenstellen eines Vivado-Projekts aus dem festen ENV5-Kern und einem DUT-Ordner.
-
-Der Kern (verilog_template/core/) ist für alle DUTs gleich. Ein DUT-Ordner enthält
-nur dut_config.vh, die DUT-Quellen und bei DUT_TYPE "USER" dut_wrapper_user.v.
-
-assemble_project() kopiert beides in die Struktur, die der Kern erwartet:
-
-    <dest>/core/   Kern (top_module.v, skeleton.v, SPI, Constraints, ...)
-    <dest>/user/   Inhalt des DUT-Ordners
-
-Den Ordner <dest> kann man direkt an build.tcl oder VivadoSynthesis.synthesize()
-übergeben (Top-Modul: TOP_MODULE).
-"""
+"""Baut ein Vivado-Projekt aus ENV5-Kern und DUT-Ordner: <dest>/core/ + <dest>/user/"""
 
 import shutil
 from pathlib import Path
@@ -21,17 +9,12 @@ USER_TEMPLATE_DIR = TEMPLATE_DIR / "user"
 CONSTRAINTS = CORE_DIR / "env5_constraints.xdc"
 TOP = "TOP_MODULE"
 
-# Python-Dateien (z. B. der Test im DUT-Ordner) gehören nicht ins Vivado-Projekt
 _IGNORE = shutil.ignore_patterns("__pycache__", "*.py", "*.pyc")
 
 
 def assemble_project(dut_dir: Path | str, dest: Path | str) -> Path:
-    """Legt Kern und DUT-Ordner unter dest an und gibt dest zurück.
-
-    dest wird vorher geleert. Liegt im DUT-Ordner eine eigene top_module.v,
-    ersetzt sie die aus dem Kern. Constraints kommen immer aus dem Kern,
-    .xdc-Dateien im DUT-Ordner sind nicht erlaubt.
-    """
+    """Leert dest, kopiert Kern und DUT-Ordner hinein und gibt dest zurück.
+    Eine top_module.v im DUT-Ordner ersetzt die aus dem Kern, .xdc ist dort verboten"""
     dut_dir = Path(dut_dir)
     dest = Path(dest)
 

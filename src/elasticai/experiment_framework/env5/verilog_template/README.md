@@ -40,7 +40,7 @@ Ein DUT-Ordner liegt irgendwo, zum Beispiel unter `tests/vivado/duts/<name>/`:
 
 ### Zusammensetzen beim Build
 
-`assemble_project()` aus `elasticai.experiment_framework.env5.verilog_project`
+`assemble_project()` aus `elasticai.experiment_framework.env5.template_project`
 kopiert Kern und DUT-Ordner in die Struktur, die der Kern erwartet:
 
 ```
@@ -173,7 +173,7 @@ Die Antwort auf einen Frame kommt mit dem **nächsten** Frame zurück.
 
 ### Header
 
-32 Bit, gelesen von der Software (`read-skeleton-id`):
+32 Bit, gelesen von der Software (`read-dut-header`):
 
 ```
 {NUM_DUT[5:0], TYPE_ID[3:0], SIZE_INPUT[5:0], SIZE_OUTPUT[5:0], BITWIDTH_IN[4:0], BITWIDTH_OUT[4:0]}
@@ -222,7 +222,7 @@ in dem er liegt.
 **Remote (`vivado_synthesis.py`):** zuerst zusammensetzen, dann synthetisieren:
 
 ```python
-from elasticai.experiment_framework.env5.verilog_project import TOP, assemble_project
+from elasticai.experiment_framework.env5.template_project import TOP, assemble_project
 
 src = assemble_project("tests/vivado/duts/reset_test", "build/reset_test")
 # VivadoSynthesis mit top=TOP, bzw. CLI: --top TOP_MODULE build/reset_test

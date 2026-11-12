@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, override
 
-from elasticai.experiment_framework.env5.verilog_project import TOP
+from elasticai.experiment_framework.env5.template_project import TOP
 from elasticai.experiment_framework.vivado import (
     BuildConfig,
     build_bitstream,

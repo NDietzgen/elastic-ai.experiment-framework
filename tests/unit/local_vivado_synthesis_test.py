@@ -1,4 +1,4 @@
-"""LocalVivadoSynthesis ohne Vivado: Config, FPGA-Typ, Quellen kopieren."""
+"""LocalVivadoSynthesis ohne Vivado: Config, FPGA-Typ, Quellen kopieren"""
 
 from pathlib import Path
 

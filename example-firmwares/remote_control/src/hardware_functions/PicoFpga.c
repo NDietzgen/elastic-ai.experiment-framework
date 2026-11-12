@@ -41,14 +41,11 @@ bool Fpga_isPoweredOn(const Fpga *self)
     return self->is_powered == 1;
 }
 
-// RSTN des Verilog-Tops ist active-low: active=true zieht die Leitung auf 0.
-// Pin wird hier (erneut) als Ausgang konfiguriert, damit der Reset auch ohne
-// vorheriges hardware_init funktioniert.
 void Fpga_setReset(Fpga *self, bool active)
 {
     gpio_set_function(self->pins->reset, GPIO_FUNC_SIO);
     gpio_set_dir(self->pins->reset, GPIO_OUT);
-    gpio_put(self->pins->reset, active ? 0 : 1);
+    gpio_put(self->pins->reset, active ? 0 : 1); // active-low
 }
 
 bool Fpga_isBusy(const Fpga *self)

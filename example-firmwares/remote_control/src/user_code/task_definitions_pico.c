@@ -2,6 +2,7 @@
 
 #include "embedded_fpga_bitstream.h"
 #include "hardware_functions/Middleware.h"
+#include "hardware_functions/TemplateMiddleware.h"
 #include "config/config.h"
 #include "eai/flash/Flash.h"
 #include "hardware_functions/Fpga.h"
@@ -15,6 +16,22 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+
+#define USER_LOGIC_START_ADDRESS 18
+#define COMPUTE_BYTE 16
+
+static void startCompute(void)
+{
+    uint8_t cmd[1] = {0x01};
+    FpgaMiddleware *fpga = Config_getFpgaMiddleware();
+    FpgaMiddleware_write(fpga, cmd, COMPUTE_BYTE, 1);
+}
+static void stopCompute(void)
+{
+    uint8_t cmd[1] = {0x00};
+    FpgaMiddleware *fpga = Config_getFpgaMiddleware();
+    FpgaMiddleware_write(fpga, cmd, COMPUTE_BYTE, 1);
+}
 
 static uint8_t eraseFlash(flashConfiguration_t *flashConfig,
     uint32_t startAddress,
@@ -104,10 +121,6 @@ uint32_t count_flash_ones(TaskContext *task_context, uint32_t length)
     return ones;
 }
 
-typedef struct
-{
-    uint8_t frames[3][9];
-} AverageFramesStruct;
 // ---------------------------------------------------------------
 
 void fast_setup_hardware_init(TaskContext *task_context)
@@ -127,7 +140,7 @@ void fast_setup_fpga_power_off(TaskContext *task_context)
 
 void fast_setup_read_skeleton_id(TaskContext *task_context)
 {
-    read_skeleton_id(task_context);
+    read_skeletion_id(task_context);
 }
 
 void fast_setup_reset_fpga(TaskContext *task_context)
@@ -138,10 +151,7 @@ void fast_setup_reset_fpga(TaskContext *task_context)
 // ---------------------------------------------------------------
 void hardware_init(TaskContext *task_context)
 {
-    if (flashSpi.spiInstance == NULL)
-    {
-        init_hardware();
-    }
+    init_hardware();
     uint16_t value = flashConfig.bytesPerPage;
 
     uint8_t data[2] = {
@@ -168,16 +178,10 @@ void fpga_power_off(TaskContext *task_context)
 
 void erase_fpga_flash(TaskContext *task_context)
 {
+    init_hardware();
     uint32_t amount_to_delete = 550000;
-    task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)&flashConfig, 1, false);
-
     uint8_t error_code = eraseFlash(&flashConfig, 0, amount_to_delete);
-    if (error_code != 0)
-    {
-        task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)&error_code, 1, false);
-    }
-
-    task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
+    task_context->task_services.send_return(&task_context->task_services, 0, error_code, false);
 }
 
 void write_to_flash(TaskContext *task_context)
@@ -282,95 +286,67 @@ void write_to_flash_from_remote(TaskContext *task_context)
 
 
 // ---------------------------------------------------------------
-// read_skeleton_id / predict: Protokoll von SPI_MIDDLEWARE aus dem Verilog-Template
-#define FPGA_RC_OK 0
-#define FPGA_RC_INVALID_INPUT 2
-#define FPGA_RC_TIMEOUT 4
-#define FPGA_RC_COMMUNICATION 5
-#define DEFAULT_DUT 1
-#define PREDICT_TIMEOUT_US (1000 * 1000)
+// read_skeletion_id / predict: Middleware.h
+#define ADDR_MODEL_ID 0
+#define BYTES_MODEL_ID 16
 
-static void ensureFpgaPowered(TaskContext *task_context)
+void read_skeletion_id(TaskContext *task_context)
 {
+    uint8_t skeleton_id[16] = {0};
+    init_hardware();
+    Fpga *fpga = Config_getFpga();
+    if (!Fpga_isPoweredOn(fpga))
+    {
+        Fpga_powerOn(fpga);
+        sleep_ms(100); // wait for FPGA to power up
+    }
+    FpgaMiddleware *fpga_middleware = Config_getFpgaMiddleware();
+    FpgaMiddleware_init(fpga_middleware);
+    FpgaMiddleware_enableUserLogic(fpga_middleware);
+    FpgaMiddleware_read(fpga_middleware, skeleton_id, ADDR_MODEL_ID, BYTES_MODEL_ID);
+    FpgaMiddleware_disableUserLogic(fpga_middleware);
+    FpgaMiddleware_deinit(fpga_middleware);
+
+    task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)&skeleton_id, BYTES_MODEL_ID, false);
+    task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
+}
+
+void predict(TaskContext *task_context)
+{
+
+    // task_context->task_services.send_data(&task_context->task_services, 0, task_context->input_data, 1, false);
+    // return;
     Fpga *fpga = Config_getFpga();
     if (!Fpga_isPoweredOn(fpga))
     {
         Fpga_powerOn(fpga);
         sleep_ms(100); // wait for FPGA to power up
         char *msg = "power_fpga";
-        task_context->task_services.send_data(&task_context->task_services, 0, (uint8_t *)msg, 10, false);
+        task_context->task_services.send_data(&task_context->task_services, 0, msg, 10, false);
     }
-}
+    FpgaMiddleware *fpga_middleware = Config_getFpgaMiddleware();
+    FpgaMiddleware_init(fpga_middleware);
+    FpgaMiddleware_enableUserLogic(fpga_middleware);
 
-// Input:  [0] DUT (optional, Default 1)
-// Output: 32-Bit-DUT-Header, Big Endian:
-//         NUM_DUT[31:26] | DUT_TYPE[25:22] | NUM_IN[21:16] | NUM_OUT[15:10] | BW_IN[9:5] | BW_OUT[4:0]
-void read_skeleton_id(TaskContext *task_context)
-{
-    uint8_t dut = (task_context->input_data_len >= 1) ? task_context->input_data[0] : DEFAULT_DUT;
+    uint8_t result_size = task_context->input_data[0];
+    uint8_t model_inference_input = task_context->input_data[1];
 
-    ensureFpgaPowered(task_context);
-    FpgaMiddleware *mw = Config_getFpgaMiddleware();
-    FpgaMiddleware_init(mw);
-    FpgaMiddleware_selectDut(mw, dut);
-    uint32_t header = 0;
-    bool ok = FpgaMiddleware_readHeader(mw, &header);
-    FpgaMiddleware_deinit(mw);
+    FpgaMiddleware_write(fpga_middleware, &model_inference_input, USER_LOGIC_START_ADDRESS, 1);
 
-    uint8_t out[4] = {header >> 24, header >> 16, header >> 8, header};
-    task_context->task_services.send_data(&task_context->task_services, 0, out, sizeof(out), false);
-    task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
-}
-
-// Input:  [0] DUT, [1] Ergebnisgröße in Byte (gerade), [2..] Eingangsdaten
-// Ablauf: DUT wählen, Worte schreiben, DO_TEST, auf FPGA_BUSY low warten,
-// Output: Ergebnisworte, Little Endian
-void predict(TaskContext *task_context)
-{
-    uint32_t len = task_context->input_data_len;
-    uint8_t dut = task_context->input_data[0];
-    uint8_t result_size = task_context->input_data[1];
-    uint32_t in_bytes = len - 2;
-
-    if (len < 4 || (in_bytes % 2) != 0 || (result_size % 2) != 0 || result_size == 0 ||
-        in_bytes / 2 > FPGA_MIDDLEWARE_MAX_WORDS || result_size / 2 > FPGA_MIDDLEWARE_MAX_WORDS)
+    startCompute();
+    while (FpgaMiddleware_fpgaIsBusy(fpga_middleware))
     {
-        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_INVALID_INPUT, false);
-        return;
     }
+    stopCompute();
 
-    ensureFpgaPowered(task_context);
-    FpgaMiddleware *mw = Config_getFpgaMiddleware();
-    FpgaMiddleware_init(mw);
-    FpgaMiddleware_selectDut(mw, dut);
+    FpgaMiddleware_read(fpga_middleware, task_context->output_data, USER_LOGIC_START_ADDRESS, result_size);
+    task_context->output_data_len = task_context->input_data_len;
 
-    const uint8_t *in = &task_context->input_data[2];
-    for (uint32_t i = 0; i < in_bytes / 2; i++)
-    {
-        FpgaMiddleware_writeWord(mw, (uint8_t)i, (uint16_t)(in[2 * i] | (in[2 * i + 1] << 8)));
-    }
+    FpgaMiddleware_disableUserLogic(fpga_middleware);
+    FpgaMiddleware_deinit(fpga_middleware);
 
-    FpgaMiddleware_startTest(mw);
-    if (!FpgaMiddleware_waitWhileBusy(mw, PREDICT_TIMEOUT_US))
-    {
-        FpgaMiddleware_deinit(mw);
-        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_TIMEOUT, false);
-        return;
-    }
-
-    bool ok = true;
-    uint8_t *out = task_context->output_data;
-    for (uint32_t i = 0; i < result_size / 2u; i++)
-    {
-        uint16_t word = 0;
-        ok &= FpgaMiddleware_readWord(mw, (uint8_t)i, &word);
-        out[2 * i] = (uint8_t)(word & 0xFF);
-        out[2 * i + 1] = (uint8_t)(word >> 8);
-    }
-    FpgaMiddleware_deinit(mw);
-
-    task_context->task_services.send_data(&task_context->task_services, 0, out, result_size, false);
-    task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
+    task_context->task_services.send_data(&task_context->task_services, 0, task_context->output_data, result_size, false);
+    task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
 }
 
 void get_flash_ones(TaskContext *task_context)
@@ -382,33 +358,99 @@ void get_flash_ones(TaskContext *task_context)
     task_context->task_services.send_return(&task_context->task_services, 0, 0, false);
 }
 
-void compute_sensor_data(TaskContext *task_context)
+// ---------------------------------------------------------------
+// read_dut_header / predict_dut: TemplateMiddleware.h
+#define FPGA_RC_OK 0
+#define FPGA_RC_INVALID_INPUT 2
+#define FPGA_RC_TIMEOUT 4
+#define FPGA_RC_COMMUNICATION 5
+#define DEFAULT_DUT 1
+#define PREDICT_TIMEOUT_US (1000 * 1000)
+
+static void ensureFpgaPowered(void)
 {
-    if (task_context->step_counter == 0 && task_context->user_data == NULL)
+    Fpga *fpga = Config_getFpga();
+    if (!Fpga_isPoweredOn(fpga))
     {
-        task_context->user_data = malloc(sizeof(AverageFramesStruct));
+        Fpga_powerOn(fpga);
+        sleep_ms(100); // wait for FPGA to power up
     }
-    AverageFramesStruct *frames = (AverageFramesStruct *)task_context->user_data;
+}
 
-    memcpy(frames->frames[task_context->step_counter % 3], task_context->input_data, 9);
-    task_context->input_data_len = 0;
+// Input:  [0] DUT (optional, Default 1)
+// Output: 32-Bit-DUT-Header, Big Endian:
+//         NUM_DUT[31:26] | DUT_TYPE[25:22] | NUM_IN[21:16] | NUM_OUT[15:10] | BW_IN[9:5] | BW_OUT[4:0]
+void read_dut_header(TaskContext *task_context)
+{
+    uint8_t dut = (task_context->input_data_len >= 1) ? task_context->input_data[0] : DEFAULT_DUT;
 
-    if (task_context->step_counter >= 2)
+    ensureFpgaPowered();
+    TemplateMiddleware *mw = Config_getTemplateMiddleware();
+    TemplateMiddleware_init(mw);
+    TemplateMiddleware_selectDut(mw, dut);
+    uint32_t header = 0;
+    bool ok = TemplateMiddleware_readHeader(mw, &header);
+    TemplateMiddleware_deinit(mw);
+
+    uint8_t out[4] = {header >> 24, header >> 16, header >> 8, header};
+    task_context->task_services.send_data(&task_context->task_services, 0, out, sizeof(out), false);
+    task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
+}
+
+// Input:  [0] DUT, [1] Ergebnisgröße in Byte (gerade), [2..] Eingangsdaten
+// Ablauf: DUT wählen, Worte schreiben, DO_TEST, auf FPGA_BUSY low warten,
+// Output: Ergebnisworte, Little Endian
+void predict_dut(TaskContext *task_context)
+{
+    uint32_t len = task_context->input_data_len;
+    if (len < 4)
     {
-        uint8_t average_frame[9] = {0};
-        for (size_t i = 0; i < 9; i++)
-        {
-            uint16_t sum = 0;
-            for (size_t j = 0; j < 3; j++)
-            {
-                sum += frames->frames[j][i];
-            }
-            average_frame[i] = sum / 3;
-        }
-        task_context->task_services.send_data(&task_context->task_services, 0, average_frame, 9, false);
+        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_INVALID_INPUT, false);
+        return;
+    }
+    uint8_t dut = task_context->input_data[0];
+    uint8_t result_size = task_context->input_data[1];
+    uint32_t in_bytes = len - 2;
+
+    if ((in_bytes % 2) != 0 || (result_size % 2) != 0 || result_size == 0 ||
+        in_bytes / 2 > TEMPLATE_MIDDLEWARE_MAX_WORDS || result_size / 2 > TEMPLATE_MIDDLEWARE_MAX_WORDS)
+    {
+        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_INVALID_INPUT, false);
+        return;
     }
 
-    task_context->step_counter++;
+    ensureFpgaPowered();
+    TemplateMiddleware *mw = Config_getTemplateMiddleware();
+    TemplateMiddleware_init(mw);
+    TemplateMiddleware_selectDut(mw, dut);
+
+    const uint8_t *in = &task_context->input_data[2];
+    for (uint32_t i = 0; i < in_bytes / 2; i++)
+    {
+        TemplateMiddleware_writeWord(mw, (uint8_t)i, (uint16_t)(in[2 * i] | (in[2 * i + 1] << 8)));
+    }
+
+    TemplateMiddleware_startTest(mw);
+    if (!TemplateMiddleware_waitWhileBusy(mw, PREDICT_TIMEOUT_US))
+    {
+        TemplateMiddleware_deinit(mw);
+        task_context->task_services.send_return(&task_context->task_services, 0, FPGA_RC_TIMEOUT, false);
+        return;
+    }
+
+    bool ok = true;
+    uint8_t *out = task_context->output_data;
+    for (uint32_t i = 0; i < result_size / 2u; i++)
+    {
+        uint16_t word = 0;
+        ok &= TemplateMiddleware_readWord(mw, (uint8_t)i, &word);
+        out[2 * i] = (uint8_t)(word & 0xFF);
+        out[2 * i + 1] = (uint8_t)(word >> 8);
+    }
+    TemplateMiddleware_deinit(mw);
+
+    task_context->task_services.send_data(&task_context->task_services, 0, out, result_size, false);
+    task_context->task_services.send_return(&task_context->task_services, 0, ok ? FPGA_RC_OK : FPGA_RC_COMMUNICATION, false);
 }
 
 // ---------------------------------------------------------------
@@ -441,7 +483,7 @@ void fpga_spi_echo(TaskContext *task_context)
     memcpy(tx, task_context->input_data, len);
     memset(&tx[len], 0x00, ECHO_DELAY_BYTES); // Dummy-Bytes, um die letzten Bytes herauszuschieben
 
-    Spi *spi = Config_getFpgaSpi();
+    Spi *spi = Config_getTemplateSpi(); // SPI-Mode 0 wie SPI_SLAVE_WCLK
     Spi_init(spi);
     Spi_setupSlave(spi, FPGA_SPI_CS);
     Spi_select(spi, FPGA_SPI_CS);
@@ -454,7 +496,7 @@ void fpga_spi_echo(TaskContext *task_context)
 }
 
 // ---------------------------------------------------------------
-// Reset über GPIO13 -> RSTN (active-low), FPGA bleibt an.
+// Reset über GPIO13 -> RSTN (active-low)
 // Freigabe per Alarm, damit der Task nicht blockiert.
 #define FPGA_RESET_DURATION_MS 5000
 

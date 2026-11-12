@@ -15,15 +15,16 @@ from ..remote_control.sync_remote_control import (
     SyncRemoteControl,
 )
 from .config import (
+    BYTE_ORDER,
     DEFAULT_DUT,
     FPGA_RESET_DURATION_S,
     HEADER_BYTES,
     TaskDefinitionIds,
-    predict_payload,
 )
 from .tasks_registry import (
     FPGAInitTask,
     FPGAWriteToFlashTask,
+    PredictDutTask,
     SimpleTask,
 )
 
@@ -78,13 +79,45 @@ class SyncFPGARemoteControl(SyncRemoteControl):
 
     def read_skeleton_id(
         self,
+        need_ack: bool = False,
+        has_crc: bool = False,
+    ) -> str:
+        """Liest die 16-Byte-Skeleton-ID als Hex"""
+        task = SimpleTask(
+            TaskDefinitionIds.FPGA_READ_SKELETON_ID,
+            need_ack=need_ack,
+            has_crc=has_crc,
+        )
+
+        self._run_task(task)
+        return task.result.hex()
+
+    def predict(
+        self,
+        data: bytes,
+        result_size: int,
+        need_ack: bool = False,
+        has_crc: bool = False,
+    ) -> bytes:
+        task = SimpleTask(
+            TaskDefinitionIds.FPGA_PREDICT,
+            result_size.to_bytes(1, BYTE_ORDER) + data,
+            need_ack=need_ack,
+            has_crc=has_crc,
+        )
+
+        self._run_task(task)
+        return task.result
+
+    def read_dut_header(
+        self,
         dut: int = DEFAULT_DUT,
         need_ack: bool = False,
         has_crc: bool = False,
     ) -> str:
-        """Liest den 32-Bit-Header des DUT 'dut' (Verilog-Template) als Hex"""
+        """Liest den 32-Bit-Header des DUT (Verilog-Template) als Hex"""
         task = SimpleTask(
-            TaskDefinitionIds.FPGA_READ_SKELETON_ID,
+            TaskDefinitionIds.FPGA_READ_DUT_HEADER,
             bytes([dut]),
             need_ack=need_ack,
             has_crc=has_crc,
@@ -107,7 +140,7 @@ class SyncFPGARemoteControl(SyncRemoteControl):
 
         self._run_task(task)
 
-    def predict(
+    def predict_dut(
         self,
         data: bytes,
         result_size: int,
@@ -115,18 +148,19 @@ class SyncFPGARemoteControl(SyncRemoteControl):
         need_ack: bool = False,
         has_crc: bool = False,
     ) -> bytes:
-        """Schreibt 'data' ins DUT 'dut', startet es und liest 'result_size' Bytes"""
+        """Schreibt data ins DUT (Verilog-Template), startet es und liest result_size Bytes"""
         """Daten und Ergebnis sind 16-Bit-Worte (Little Endian) ab Adresse 0"""
-        payload, words_bytes = predict_payload(data, result_size, dut)
-        task = SimpleTask(
-            TaskDefinitionIds.FPGA_PREDICT,
-            payload,
+        task = PredictDutTask(
+            TaskDefinitionIds.FPGA_PREDICT_DUT,
+            data,
+            result_size,
+            dut,
             need_ack=need_ack,
             has_crc=has_crc,
         )
 
         self._run_task(task)
-        return task.result[-words_bytes:][:result_size]
+        return task.result
 
     def spi_echo(
         self,
@@ -135,7 +169,6 @@ class SyncFPGARemoteControl(SyncRemoteControl):
         has_crc: bool = False,
     ) -> bytes:
         """Schickt data per SPI ans FPGA und gibt die Echo-Antwort zurück"""
-        """Funktioniert mit jedem Bitstream aus dem Verilog-Template"""
         task = SimpleTask(
             TaskDefinitionIds.FPGA_SPI_ECHO,
             data,
@@ -316,7 +349,7 @@ def power_on(control, need_ack, has_crc):
 @communication_options
 @click.pass_obj
 def reset(control, need_ack, has_crc):
-    """Hält die FPGA-Logik über GPIO13 (RSTN) kurz im Reset, ohne das FPGA abzuschalten."""
+    """Hält die FPGA-Logik über GPIO13 (RSTN) kurz im Reset, ohne das FPGA abzuschalten"""
     control.fpga_reset(
         need_ack=need_ack,
         has_crc=has_crc,
@@ -338,16 +371,45 @@ def clear_flash(control, need_ack, has_crc):
 
 
 @fpga.command("read-skeleton-id")
-@click.option("--dut", type=int, default=DEFAULT_DUT, show_default=True)
 @communication_options
 @click.pass_obj
-def read_skeleton_id(control, dut, need_ack, has_crc):
+def read_skeleton_id(control, need_ack, has_crc):
+    """16-Byte-Skeleton-ID lesen"""
     result = control.read_skeleton_id(
-        dut=dut,
         need_ack=need_ack,
         has_crc=has_crc,
     )
     click.echo(f"Skeleton ID: {result}")
+
+
+@fpga.command("predict")
+@click.argument("data")
+@click.argument("length", type=int)
+@communication_options
+@click.pass_obj
+def predict(control, data, length, need_ack, has_crc):
+    """Predict über die Standard-Middleware"""
+    result = control.predict(
+        bytes.fromhex(data.removeprefix("0x")),
+        length,
+        need_ack=need_ack,
+        has_crc=has_crc,
+    )
+    click.echo(f"Predict result: {result}")
+
+
+@fpga.command("read-dut-header")
+@click.option("--dut", type=int, default=DEFAULT_DUT, show_default=True)
+@communication_options
+@click.pass_obj
+def read_dut_header(control, dut, need_ack, has_crc):
+    """32-Bit-DUT-Header lesen (Verilog-Template)"""
+    result = control.read_dut_header(
+        dut=dut,
+        need_ack=need_ack,
+        has_crc=has_crc,
+    )
+    click.echo(f"DUT header: {result}")
 
 
 @fpga.command("upload")
@@ -365,14 +427,15 @@ def upload(control, flash_sector, path, need_ack, has_crc):
     click.echo("Upload was successful")
 
 
-@fpga.command("predict")
+@fpga.command("predict-dut")
 @click.argument("data")
 @click.argument("length", type=int)
 @click.option("--dut", type=int, default=DEFAULT_DUT, show_default=True)
 @communication_options
 @click.pass_obj
-def predict(control, data, length, dut, need_ack, has_crc):
-    result = control.predict(
+def predict_dut(control, data, length, dut, need_ack, has_crc):
+    """Daten ins DUT schreiben, Test starten, Ergebnis lesen (Verilog-Template)"""
+    result = control.predict_dut(
         bytes.fromhex(data.removeprefix("0x")),
         length,
         dut=dut,
@@ -387,9 +450,7 @@ def predict(control, data, length, dut, need_ack, has_crc):
 @communication_options
 @click.pass_obj
 def echo(control, data, need_ack, has_crc):
-    """Schickt Daten ans FPGA und zeigt das Echo.
-    Funktioniert mit jedem Bitstream aus dem Verilog-Template.
-    """
+    """Schickt Daten ans FPGA und zeigt das Echo"""
     try:
         sent = bytes.fromhex(data.removeprefix("0x"))
     except ValueError as exc:

@@ -10,6 +10,7 @@
 #include "eai/com/UsbProtocolBase.h"
 
 #include "hardware_functions/Middleware.h"
+#include "hardware_functions/TemplateMiddleware.h"
 #include "hardware_functions/SpiPico.h"
 
 #include "hardware_functions/PicoFpga.h"
@@ -54,7 +55,7 @@ Spi *Config_getFpgaSpi(void)
       .mosiPin = FPGA_SPI_MOSI,
       .sckPin = FPGA_SPI_CLOCK,
       .data_bits = 8,
-      .phase = EAI_SPI_CPHA_0, // SPI-Mode 0 wie SPI_SLAVE_WCLK im Verilog-Template
+      .phase = EAI_SPI_CPHA_1, // SPI-Mode 1 für die alte elastic-ai-Middleware
       .order = EAI_SPI_MSB_FIRST,
       .polarity = EAI_SPI_CPOL_0};
   if (fpgaSpi == NULL)
@@ -63,6 +64,28 @@ Spi *Config_getFpgaSpi(void)
     Spi_setConfig(fpgaSpi, &fpgaSpiConfig);
   }
   return fpgaSpi;
+}
+
+// Gleiche Hardware wie Config_getFpgaSpi, aber SPI-Mode 0 wie SPI_SLAVE_WCLK
+// im Verilog-Template. Eigene Instanz, wird bei jedem init/deinit neu angewendet.
+Spi *Config_getTemplateSpi(void)
+{
+  static Spi *templateSpi = NULL;
+  static SpiConfig templateSpiConfig = {
+      .baudrate = 10000 * 1000,
+      .misoPin = FPGA_SPI_MISO,
+      .mosiPin = FPGA_SPI_MOSI,
+      .sckPin = FPGA_SPI_CLOCK,
+      .data_bits = 8,
+      .phase = EAI_SPI_CPHA_0,
+      .order = EAI_SPI_MSB_FIRST,
+      .polarity = EAI_SPI_CPOL_0};
+  if (templateSpi == NULL)
+  {
+    templateSpi = PicoSpi_create(FPGA_SPI_MODULE);
+    Spi_setConfig(templateSpi, &templateSpiConfig);
+  }
+  return templateSpi;
 }
 
 FpgaMiddleware *Config_getFpgaMiddleware(void)
@@ -74,6 +97,17 @@ FpgaMiddleware *Config_getFpgaMiddleware(void)
     fpga = FpgaMiddleware_new(Config_getFpgaSpi(), FPGA_SPI_CS);
   }
   return fpga;
+}
+
+TemplateMiddleware *Config_getTemplateMiddleware(void)
+{
+  static TemplateMiddleware *middleware = NULL;
+
+  if (middleware == NULL)
+  {
+    middleware = TemplateMiddleware_new(Config_getTemplateSpi(), FPGA_SPI_CS, Config_getFpga()->pins->busy);
+  }
+  return middleware;
 }
 
 spiConfiguration_t flashSpi = {
@@ -90,6 +124,12 @@ flashConfiguration_t flashConfig = {
 
 void init_hardware(void)
 {
+  static bool initialized = false;
+  if (initialized)
+  {
+    return;
+  }
+  initialized = true;
 
   flashSpi.spiInstance = FLASH_SPI_MODULE;
 

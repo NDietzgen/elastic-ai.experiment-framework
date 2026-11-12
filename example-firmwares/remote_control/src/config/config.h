@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 #include "hardware_functions/Middleware.h"
+#include "hardware_functions/TemplateMiddleware.h"
 #include "hardware_functions/Fpga.h"
 #include "eai/flash/Flash.h"
 
@@ -13,5 +14,7 @@ Fpga *Config_getFpga(void);
 void init_hardware(void);
 FpgaMiddleware *Config_getFpgaMiddleware(void);
 Spi *Config_getFpgaSpi(void);
+TemplateMiddleware *Config_getTemplateMiddleware(void);
+Spi *Config_getTemplateSpi(void);
 
 #endif // CONFIG_H

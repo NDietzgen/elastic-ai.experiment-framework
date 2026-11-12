@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from elasticai.experiment_framework.env5.verilog_project import (
+from elasticai.experiment_framework.env5.template_project import (
     CONSTRAINTS,
     TOP,
     assemble_project,

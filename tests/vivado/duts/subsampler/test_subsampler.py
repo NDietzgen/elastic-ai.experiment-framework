@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Der feste Kern (verilog_template/core/) wird beim Build automatisch dazugenommen.
 DUT_DIR = Path(__file__).parent
 
-# Gemeinsame Ablage aller DUTs für Bitstreams, Reports und builds.csv (WSL-Pfad)
+# Gemeinsame Ablage für Bitstreams, Reports und builds.csv 
 ARTIFACTS = Path(__file__).parents[2] / "artifacts"
 
 SYNTH = LocalVivadoSynthesis().set_config(
@@ -83,11 +83,11 @@ def fpga(wait_for_device):
 
 
 def send(fpga, value: int) -> int:
-    result = fpga.predict(value.to_bytes(2, "little"), 2, dut=DUT)
+    result = fpga.predict_dut(value.to_bytes(2, "little"), 2, dut=DUT)
     return int.from_bytes(result, "little")
 
 
-"""Pro predict() geht ein 16-Bit-Wert hinein, und der aktuelle Ausgang kommt zurück.
+"""Pro predict_dut() geht ein 16-Bit-Wert hinein, und der aktuelle Ausgang kommt zurück.
 Der Subsampler übernimmt jeden DEC_RATE-ten Wert und hält ihn bis zur nächsten
 Übernahme. Wo der interne Zähler beim Start steht, ist egal"""
 

@@ -80,4 +80,35 @@ class FPGAWriteToFlashTask(Task):
             pos = i * self.chunk_size
             chunk = self._data[pos : pos + self.chunk_size]
 
-            yield SendChunk(chunk)
+            yield SendChunk(chunk, need_ack=True)
+            
+
+class PredictDutTask(SimpleTask): #predict_dut der Template-Middleware
+
+    """Sendet [DUT, Ergebnisbytes, Daten]. Daten und Ergebnis sind 16-Bit-Worte
+    (Little Endian), ungerade Längen werden auf ganze Worte aufgefüllt.
+    result liefert genau result_size Bytes"""
+    
+    def __init__(
+        self,
+        task_def_id: int,
+        data: bytes,
+        result_size: int,
+        dut: int,
+        need_ack: bool = False,
+        has_crc: bool = False,
+    ):
+        if len(data) % 2:
+            data += b"\x00"
+        self._words_bytes = result_size + (result_size % 2)
+        self._result_size = result_size
+        super().__init__(
+            task_def_id,
+            bytes([dut, self._words_bytes]) + data,
+            need_ack=need_ack,
+            has_crc=has_crc,
+        )
+
+    @property
+    def result(self) -> bytes:
+        return super().result[-self._words_bytes :][: self._result_size]

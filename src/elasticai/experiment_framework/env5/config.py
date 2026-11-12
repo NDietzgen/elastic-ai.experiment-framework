@@ -13,24 +13,13 @@ class TaskDefinitionIds(IntEnum):
     FPGA_CLEAR_FLASH = 0x0a
     FPGA_SPI_ECHO = 0x0c
     FPGA_RESET = 0x0d
+    FPGA_READ_DUT_HEADER = 0x0e
+    FPGA_PREDICT_DUT = 0x0f
 
-
-# Dauer, die GPIO13 (RSTN) beim FPGA-Reset low gehalten wird (siehe reset_fpga in der Firmware)
+# Reset-Dauer (GPIO13 (RSTN) auf Low)
 FPGA_RESET_DURATION_S = 5.0
 
 
-# --- SPI_MIDDLEWARE aus dem Verilog-Template (read_skeleton_id / predict)
+# --- SPI_MIDDLEWARE aus dem Verilog-Template (read_dut_header / predict_dut)
 DEFAULT_DUT = 1
 HEADER_BYTES = 4  # 32-Bit-DUT-Header
-
-
-def predict_payload(data: bytes, result_size: int, dut: int) -> tuple[bytes, int]:
-    """Baut die Task-Daten für predict: [DUT, Ergebnisbytes, Daten].
-
-    Daten und Ergebnis sind 16-Bit-Worte (Little Endian); ungerade Längen
-    werden auf ganze Worte aufgefüllt. Gibt Payload und Ergebnisbytes zurück.
-    """
-    if len(data) % 2:
-        data += b"\x00"
-    words_bytes = result_size + (result_size % 2)
-    return bytes([dut, words_bytes]) + data, words_bytes

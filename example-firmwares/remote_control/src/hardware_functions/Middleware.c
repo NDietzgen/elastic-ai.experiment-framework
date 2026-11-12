@@ -4,7 +4,6 @@
 
 #include "Spi.h"
 #include "hardware/gpio.h"
-#include "pico/time.h"
 
 enum FpgaPowerStatus
 {
@@ -139,91 +138,4 @@ bool FpgaMiddleware_fpgaIsBusy(FpgaMiddleware *self)
 bool FpgaMiddleware_isIdle(FpgaMiddleware *self)
 {
   return gpio_get(self->addresses->fpga_busy_pin) == 0;
-}
-
-// ---------------------------------------------------------------------------
-// Protokoll von SPI_MIDDLEWARE aus dem Verilog-Template (siehe Middleware.h)
-// ---------------------------------------------------------------------------
-#define CNTL_DO_TEST (1u << 0)
-#define CNTL_SEL_DUT (1u << 1)
-
-// CSN muss zwischen zwei Frames kurz high sein, damit SPI_SLAVE_WCLK den Frame
-// abschließt und SPI_MIDDLEWARE die Antwort für den nächsten Frame bereitstellt.
-#define INTER_FRAME_DELAY_US 1
-
-static uint32_t frameHead(FpgaMiddlewareCmd cmd, uint8_t adr)
-{
-  return ((uint32_t)cmd << 6) | (adr & FPGA_MIDDLEWARE_ADR_MASK);
-}
-
-static bool frameMatches(uint32_t rx, FpgaMiddlewareCmd cmd, uint8_t adr)
-{
-  return (rx >> 16) == frameHead(cmd, adr);
-}
-
-uint32_t FpgaMiddleware_transferFrame(FpgaMiddleware *self, FpgaMiddlewareCmd cmd, uint8_t adr, uint16_t data)
-{
-  const uint8_t tx[3] = {
-      (uint8_t)frameHead(cmd, adr),
-      (uint8_t)(data >> 8),
-      (uint8_t)(data & 0xFF)};
-  uint8_t rx[3] = {0};
-
-  Spi_select(self->spi, self->slaveHandle);
-  Spi_read_write(self->spi, tx, rx, sizeof(tx));
-  Spi_deselect(self->spi, self->slaveHandle);
-  busy_wait_us(INTER_FRAME_DELAY_US);
-
-  return ((uint32_t)rx[0] << 16) | ((uint32_t)rx[1] << 8) | rx[2];
-}
-
-void FpgaMiddleware_selectDut(FpgaMiddleware *self, uint8_t dut)
-{
-  FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_CNTL, CNTL_SEL_DUT, (uint16_t)dut << 1);
-}
-
-void FpgaMiddleware_writeWord(FpgaMiddleware *self, uint8_t adr, uint16_t data)
-{
-  FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_WR, adr, data);
-}
-
-bool FpgaMiddleware_readWord(FpgaMiddleware *self, uint8_t adr, uint16_t *data)
-{
-  // 1. Frame setzt DUT_ADR, 2. Frame übernimmt DUT_DOUT dieser Adresse,
-  // 3. Frame schiebt die Antwort des 2. Frames heraus.
-  FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_RD, adr, 0);
-  FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_RD, adr, 0);
-  uint32_t rx = FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_RD, adr, 0);
-
-  *data = (uint16_t)rx;
-  return frameMatches(rx, FPGA_MIDDLEWARE_CMD_RD, adr);
-}
-
-bool FpgaMiddleware_readHeader(FpgaMiddleware *self, uint32_t *header)
-{
-  // Header (32 Bit) liegt in zwei 16-Bit-Teilen: ADR 0 = [15:0], ADR 1 = [31:16]
-  FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_HEAD, 0, 0);
-  uint32_t low = FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_HEAD, 1, 0);
-  uint32_t high = FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_HEAD, 1, 0);
-
-  *header = ((high & 0xFFFF) << 16) | (low & 0xFFFF);
-  return frameMatches(low, FPGA_MIDDLEWARE_CMD_HEAD, 0) && frameMatches(high, FPGA_MIDDLEWARE_CMD_HEAD, 1);
-}
-
-void FpgaMiddleware_startTest(FpgaMiddleware *self)
-{
-  FpgaMiddleware_transferFrame(self, FPGA_MIDDLEWARE_CMD_CNTL, CNTL_DO_TEST, 0);
-}
-
-bool FpgaMiddleware_waitWhileBusy(FpgaMiddleware *self, uint32_t timeout_us)
-{
-  absolute_time_t deadline = make_timeout_time_us(timeout_us);
-  while (FpgaMiddleware_fpgaIsBusy(self))
-  {
-    if (time_reached(deadline))
-    {
-      return false;
-    }
-  }
-  return true;
 }

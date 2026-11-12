@@ -33,8 +33,8 @@ TaskDefinition task_definition_table[] = {
     {.setup = default_setup,
      .handle = write_to_flash_from_remote,
      .tear_down = default_teardown},
-    {.setup = default_setup, 
-     .handle = read_skeleton_id,
+    {.setup = fast_setup_read_skeleton_id,
+     .handle = read_skeletion_id,
      .tear_down = default_teardown},
     {.setup = default_setup,
      .handle = predict,
@@ -42,20 +42,26 @@ TaskDefinition task_definition_table[] = {
     {.setup = default_setup,
      .handle = write_to_flash,
      .tear_down = default_teardown},
-    {.setup = default_setup, 
+    {.setup = default_setup, // 0x0a
      .handle = erase_fpga_flash,
      .tear_down = default_teardown},
-    
-    {.setup = default_setup,
-     .handle = compute_sensor_data,
+    {.setup = default_setup, // 0x0b
+     .handle = get_flash_ones,
      .tear_down = default_teardown},
-    {.setup = default_setup, 
+
+    //SPI_MIDDLEWARE aus dem Verilog-Template
+    {.setup = default_setup, // 0x0c
      .handle = fpga_spi_echo,
      .tear_down = default_teardown},
-    {.setup = fast_setup_reset_fpga,
+    {.setup = fast_setup_reset_fpga, // 0x0d
      .handle = reset_fpga,
+     .tear_down = default_teardown},
+    {.setup = default_setup, // 0x0e
+     .handle = read_dut_header,
+     .tear_down = default_teardown},
+    {.setup = default_setup, // 0x0f
+     .handle = predict_dut,
      .tear_down = default_teardown}
-
 #endif
 };
 
